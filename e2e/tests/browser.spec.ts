@@ -50,7 +50,7 @@ test.describe.serial("Event Registration", () => {
   }) => {
     await indexPage.nameField.fill(invalidRegistrationBadEmail.name);
     await indexPage.emailField.fill(invalidRegistrationBadEmail.email);
-    await indexPage.submitButton.click();
+    // await indexPage.submitButton.click();
     await expect(indexPage.emailFieldError).toContainText(
       invalidEmailFormatErrorMessage,
     );

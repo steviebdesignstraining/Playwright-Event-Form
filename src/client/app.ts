@@ -72,7 +72,7 @@ async function renderEvent(): Promise<void> {
           <section aria-labelledby="registration-heading">
             <h2 id="registration-heading">Register as a guest</h2>
             <p>Fields marked * are required.</p>
-            <div id="form-errors" class="error-summary"></div>
+            <div id="form-errors" class="error-summary" aria-live="polite" role="alert"></div>
             <form id="registration-form" novalidate>
               ${field('name', 'Name', 'text', true)}
               ${field('email', 'Email address', 'email', true)}
@@ -91,7 +91,7 @@ async function renderEvent(): Promise<void> {
               </div>
               <button class="primary-button" type="submit">Register</button>
             </form>
-            <div id="registration-result" class="registration-result"></div>
+            <div id="registration-result" class="registration-result" aria-live="polite"></div>
           </section>
         </article>
 
@@ -192,7 +192,7 @@ async function renderCancellation(): Promise<void> {
       <h1>Cancel your registration</h1>
       <p>This will release your event place.</p>
       <button id="confirm-cancel" class="danger-button" type="button">Confirm cancellation</button>
-      <div id="cancel-result"></div>
+      <div id="cancel-result" aria-live="polite"></div>
     </section>`;
 
   document.querySelector<HTMLButtonElement>('#confirm-cancel')?.addEventListener('click', async () => {
