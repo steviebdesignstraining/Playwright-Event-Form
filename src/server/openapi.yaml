@@ -1,0 +1,173 @@
+openapi: 3.0.3
+info:
+  title: Event Registration API
+  version: 1.0.0-rc.1
+  description: Public API for the event registration release candidate.
+servers:
+  - url: http://127.0.0.1:3000
+paths:
+  /api/health:
+    get:
+      summary: Check service health
+      responses:
+        '200':
+          description: Service is healthy
+  /api/events:
+    get:
+      summary: List public events
+      responses:
+        '200':
+          description: Event summaries
+  /api/events/{eventId}:
+    parameters:
+      - in: path
+        name: eventId
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get an event and its availability
+      responses:
+        '200':
+          description: Public event details
+        '404':
+          description: Event not found
+  /api/events/{eventId}/registrations:
+    parameters:
+      - in: path
+        name: eventId
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Register a guest or join the waiting list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationInput'
+      responses:
+        '201':
+          description: Registration created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationResult'
+        '400':
+          description: Invalid request
+        '409':
+          description: Guest already has an active entry
+    patch:
+      summary: Update an existing registration
+      parameters:
+        - in: path
+          name: registrationId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationPatchInput'
+      responses:
+        '200':
+          description: Registration updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationResult'
+        '400':
+          description: Invalid request
+        '404':
+          description: Registration not found
+  /api/cancellations/{token}:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Cancel a confirmed registration
+      responses:
+        '200':
+          description: Registration cancelled
+        '404':
+          description: Cancellation link not found
+  /api/messages:
+    get:
+      summary: List messages in the local test inbox
+      description: Test-only replacement for external email delivery.
+      responses:
+        '200':
+          description: Generated messages
+  /api/reset:
+    post:
+      summary: Restore the seeded test state
+      responses:
+        '204':
+          description: State restored
+components:
+  schemas:
+    RegistrationInput:
+      type: object
+      required:
+        - name
+        - email
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        email:
+          type: string
+          format: email
+        organisation:
+          type: string
+          maxLength: 150
+        dietaryRequirements:
+          type: string
+          maxLength: 500
+        accessibilityNeeds:
+          type: string
+          maxLength: 500
+        marketingConsent:
+          type: boolean
+          default: false
+    RegistrationPatchInput:
+      type: object
+      properties:
+        dietaryRequirements:
+          type: string
+          maxLength: 500
+        accessibilityNeeds:
+          type: string
+          maxLength: 500
+        organisation:
+          type: string
+          maxLength: 150
+        marketingConsent:
+          type: boolean
+          default: false
+    RegistrationResult:
+      type: object
+      required:
+        - id
+        - eventId
+        - email
+        - status
+      properties:
+        id:
+          type: string
+        eventId:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        status:
+          type: string
+          enum: [confirmed, waiting]

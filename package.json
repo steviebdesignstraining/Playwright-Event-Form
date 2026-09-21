@@ -1,0 +1,50 @@
+{
+  "name": "senior-qa-assessment",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local event registration release candidate for a Senior QA Engineer assessment",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node --import tsx src/server/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:ci": "playwright test --workers=4 --retries=1",
+    "setup:browsers": "playwright install chromium webkit",
+    "allure:generate": "allure generate allure-results --clean -o allure-report",
+    "allure:open": "allure open allure-report",
+    "secrets:init": "node scripts/secrets.mjs init",
+    "secrets:push": "node scripts/secrets.mjs push",
+    "secrets:pull": "node scripts/secrets.mjs pull",
+    "secrets:list": "node scripts/secrets.mjs list",
+    "gh-secrets:push": "node scripts/sync-github-secrets.mjs push-secrets",
+    "gh-vars:push": "node scripts/sync-github-secrets.mjs push-vars",
+    "gh-secrets:push-all": "node scripts/sync-github-secrets.mjs push-all",
+    "gh-secrets:list": "node scripts/sync-github-secrets.mjs list-secrets",
+    "gh-vars:list": "node scripts/sync-github-secrets.mjs list-vars",
+    "gh-secrets:delete": "node scripts/sync-github-secrets.mjs delete-secret",
+    "gh-vars:delete": "node scripts/sync-github-secrets.mjs delete-var",
+    "gh-envs:list": "node scripts/sync-github-secrets.mjs list-envs"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@playwright/test": "^1.55.0",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.3.0",
+    "@types/swagger-ui-express": "^4.1.8",
+    "allure-commandline": "^2.32.0",
+    "allure-playwright": "^3.2.0",
+    "dotenv": "^16.5.0",
+    "esbuild": "^0.25.9",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,0 +1,62 @@
+$kind: http-request
+description: "Positive test: register a guest."
+url: "{{baseUrl}}/api/events/{{eventId}}/registrations"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: text
+  content: |-
+    {
+      "name": "Stephen Bennett",
+      "email": "{{registrationEmail}}",
+      "organisation": "Acme Studio",
+      "dietaryRequirements": "Nut allergy",
+      "accessibilityNeeds": "Step-free access",
+      "marketingConsent": true
+    }
+scripts:
+  - type: beforeRequest
+    code: |-
+      // Generate a unique email for this test run.
+      const random = Math.random().toString(36).slice(2, 10);
+      const email = `stephen-${random}@example.com`;
+      pm.collectionVariables.set('registrationEmail', email);
+      pm.environment.set('registrationEmail', email);
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test('Status code is 201', function () {
+          pm.response.to.have.status(201);
+      });
+
+      const body = pm.response.json();
+
+      pm.test('Registration contains required response fields', function () {
+          pm.expect(body).to.have.property('id');
+          pm.expect(body).to.have.property('eventId');
+          pm.expect(body).to.have.property('name');
+          pm.expect(body).to.have.property('email');
+          pm.expect(body).to.have.property('status');
+      });
+
+      // Parse values needed by later requests.
+      if (body.id) {
+          pm.collectionVariables.set('registrationId', body.id);
+          pm.environment.set('registrationId', body.id);
+      }
+
+      if (body.token) {
+          pm.collectionVariables.set('cancellationToken', body.token);
+          pm.environment.set('cancellationToken', body.token);
+      }
+
+      pm.test('Name is Stephen Bennett', function () {
+          pm.expect(body.name).to.eql('Stephen Bennett');
+      });
+      pm.test('Status is confirmed or waiting', function () {
+          pm.expect(['confirmed', 'waiting']).to.include(body.status);
+      });
+    language: text/javascript
+order: 1000

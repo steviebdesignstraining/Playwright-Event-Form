@@ -1,0 +1,12 @@
+$kind: http-request
+description: "Negative test: event does not exist."
+url: "{{baseUrl}}/api/events/{{invalidEventId}}"
+method: GET
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Status code is 404', function () {
+          pm.response.to.have.status(404);
+      });
+    language: text/javascript
+order: 3000

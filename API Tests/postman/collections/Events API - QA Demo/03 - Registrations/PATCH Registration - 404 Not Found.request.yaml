@@ -1,0 +1,20 @@
+$kind: http-request
+description: "Negative test: registration does not exist."
+url: "{{baseUrl}}/api/events/{{eventId}}/registrations/does-not-exist"
+method: PATCH
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "dietaryRequirements": "Gluten free"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Status code is 404', function () {
+          pm.response.to.have.status(404);
+      });
+    language: text/javascript
+order: 6000

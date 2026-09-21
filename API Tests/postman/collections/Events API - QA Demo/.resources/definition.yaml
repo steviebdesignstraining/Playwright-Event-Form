@@ -1,0 +1,19 @@
+$kind: collection
+description: Postman collection generated from the supplied Swagger/OpenAPI documentation. Includes positive and negative requests for health, events, registrations, cancellation, messages and test-state reset.
+variables:
+  baseUrl: http://127.0.0.1:3000
+  eventId: future-of-work-2026
+  invalidEventId: invalid-event-id
+  invalidToken: invalid-token
+  emptyToken: ""
+  registrationId: ""
+  cancellationToken: ""
+  registrationEmail: ""
+scripts:
+  - type: http:beforeRequest
+    code: |-
+      // Local test-data defaults
+      if (!pm.variables.get('eventId')) pm.variables.set('eventId', 'future-of-work-2026');
+      if (!pm.variables.get('invalidEventId')) pm.variables.set('invalidEventId', 'invalid-event-id');
+      if (!pm.variables.get('invalidToken')) pm.variables.set('invalidToken', 'invalid-token');
+    language: text/javascript

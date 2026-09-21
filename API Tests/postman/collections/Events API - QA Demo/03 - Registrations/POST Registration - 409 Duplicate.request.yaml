@@ -1,0 +1,25 @@
+$kind: http-request
+description: "Negative test: guest already has an active registration. Run after the successful registration request."
+url: "{{baseUrl}}/api/events/{{eventId}}/registrations"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "name": "Stephen Bennett",
+      "email": "{{registrationEmail}}",
+      "organisation": "Acme Studio",
+      "dietaryRequirements": "Nut allergy",
+      "accessibilityNeeds": "Step-free access",
+      "marketingConsent": true
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Status code is 409', function () {
+          pm.response.to.have.status(409);
+      });
+    language: text/javascript
+order: 3000

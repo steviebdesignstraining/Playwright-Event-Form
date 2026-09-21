@@ -1,0 +1,34 @@
+$kind: http-request
+description: "Positive test: update an existing registration."
+url: "{{baseUrl}}/api/events/{{eventId}}/registrations/{{registrationId}}"
+method: PATCH
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: text
+  content: |-
+    {
+      "dietaryRequirements": "Gluten free",
+      "accessibilityNeeds": "Wheelchair access"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Status code is 200', function () {
+          pm.response.to.have.status(200);
+      });
+
+      const body = pm.response.json();
+      pm.test('Updated registration response contains required fields', function () {
+          pm.expect(body).to.have.property('id');
+          pm.expect(body).to.have.property('eventId');
+          pm.expect(body).to.have.property('name');
+          pm.expect(body).to.have.property('email');
+          pm.expect(body).to.have.property('status');
+      });
+
+      if (body.id) pm.collectionVariables.set('registrationId', body.id);
+      if (body.token) pm.collectionVariables.set('cancellationToken', body.token);
+    language: text/javascript
+order: 4000

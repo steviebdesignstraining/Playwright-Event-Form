@@ -1,0 +1,16 @@
+$kind: http-request
+description: Check service health.
+url: "{{baseUrl}}/api/health"
+method: GET
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Status code is 200', function () {
+          pm.response.to.have.status(200);
+      });
+
+      pm.test('Response status is ok', function () {
+          pm.expect(pm.response.json()).to.have.property('status', 'ok');
+      });
+    language: text/javascript
+order: 1000
