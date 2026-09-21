@@ -1,6 +1,6 @@
 # 🚀 Stephen Bennett's QA Automation Project
 
-[](https://github.com/stephen-bennett-qa/stephen-bennett-qa/actions/workflows/playwright-allure.yml/badge.svg)
+[](https://github.com/stephen-bennett-qa/stephen-bennett-qa/actions/workflows/ai-qa-bug-reporting.yml/badge.svg)
 
 ## 👋 Introduction
 
@@ -142,10 +142,12 @@ Download the 'allure-report' artifact from the workflow run
 https://github.com/stephen-bennett-qa/stephen-bennett-qa/actions
 ```
 
-The CI/CD pipeline (`.github/workflows/playwright-allure.yml`) runs on every push/PR to main/master and includes:
-1. **Run Tests** - Executes Playwright tests with retries
-2. **Generate Allure Report** - Creates HTML report from test results
-3. **Upload Artifacts** - Allure report, Playwright report, traces, and raw results
+The CI/CD pipeline (`.github/workflows/ai-qa-bug-reporting.yml`) runs on every push/PR to main/master and includes:
+1. **Run Tests** - Executes Playwright tests
+2. **AI Analysis** - OpenAI defect analysis, Copilot validation
+3. **Create Issues** - Creates GitHub Issues for product bugs
+4. **Generate Allure Report** - Creates HTML report from test results
+5. **Deploy Allure** - Publishes report to GitHub Pages
 
 -----
 
@@ -203,7 +205,7 @@ For any issues or questions during execution:
 stephen-bennett-qa/
 ├── .github/
 │   └── workflows/
-│       └── playwright-allure.yml    # CI/CD pipeline
+│       └── ai-qa-bug-reporting.yml    # CI/CD pipeline
 ├── .venv/                           # Environment secrets (gitignored)
 │   ├── .venv.local
 │   ├── .venv.staging

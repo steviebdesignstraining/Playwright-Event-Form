@@ -170,21 +170,25 @@ jobs:
         run: npm ci
 
       - name: Download analysis
+        if: always()
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: ai-analysis
           path: .
 
       - name: Check for validated bugs
+        if: always()
         id: check-bugs
         run: |
           if [ ! -f "validated-bug.json" ]; then
             echo "no_bugs=true" >> $GITHUB_OUTPUT
-          else
-            PRODUCT_BUG_COUNT=$(node -e "const d=require('./validated-bug.json'); console.log(d.filter(x=>x.analysis&&x.analysis.classification==='PRODUCT_BUG').length)")
-            echo "product_bug_count=$PRODUCT_BUG_COUNT" >> $GITHUB_OUTPUT
-            echo "no_bugs=false" >> $GITHUB_OUTPUT
+            echo "Skipping issue creation — no validated bugs found."
+            exit 0
           fi
+          PRODUCT_BUG_COUNT=$(node -e "const d=require('./validated-bug.json'); console.log(d.filter(x=>x.analysis&&x.analysis.classification==='PRODUCT_BUG').length)")
+          echo "product_bug_count=$PRODUCT_BUG_COUNT" >> $GITHUB_OUTPUT
+          echo "no_bugs=false" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Issues
         if: steps.check-bugs.outputs.no_bugs == 'false' && steps.check-bugs.outputs.product_bug_count != '0'
@@ -223,13 +227,26 @@ jobs:
         run: npm ci
 
       - name: Download created issues
+        if: always()
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: created-issues
           path: .
 
-      - name: Add to project
+      - name: Check for issues to add
         if: always()
+        id: check-issues
+        run: |
+          if [ ! -f "created-issues.json" ]; then
+            echo "no_issues=true" >> $GITHUB_OUTPUT
+            echo "No issues to add to project."
+            exit 0
+          fi
+          echo "no_issues=false" >> $GITHUB_OUTPUT
+
+      - name: Add to project
+        if: steps.check-issues.outputs.no_issues == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME || 'AI QA Bug Reporting' }}
