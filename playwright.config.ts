@@ -9,6 +9,7 @@ export default defineConfig({
   workers: 1,
   reporter: [
     ['list'],
+    ['json', { outputFile: 'playwright-report/results.json' }],
     ['html', { open: 'never' }],
     ['allure-playwright', { detail: true, outputFolder: 'allure-results' }],
   ],
@@ -16,6 +17,8 @@ export default defineConfig({
     baseURL: process.env.BASE_URL || 'http://127.0.0.1:3000',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+    headless: true,
   },
   webServer: {
     command: 'npm start',

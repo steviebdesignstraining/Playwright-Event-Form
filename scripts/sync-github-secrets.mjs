@@ -76,6 +76,28 @@ function runGh(args, options = {}) {
   }
 }
 
+function pushEnvSecret(secretName) {
+  const sourceFile = join(projectRoot, '.env.local');
+  if (!existsSync(sourceFile)) {
+    console.error(`Error: .env.local not found`);
+    process.exit(1);
+  }
+
+  const secrets = parseEnvFile(sourceFile);
+  if (!secrets[secretName]) {
+    console.error(`Error: ${secretName} not found in .env.local`);
+    process.exit(1);
+  }
+
+  const repo = getRepo();
+  try {
+    runGh(`secret set "${secretName}" --body "${secrets[secretName]}" --repo ${repo}`, { silent: true });
+    console.log(`  ✓ ${secretName}`);
+  } catch {
+    console.error(`  ✗ ${secretName} (failed)`);
+  }
+}
+
 function pushSecrets(env) {
   const sourceFile = join(venvDir, `.venv.${env}`);
   if (!existsSync(sourceFile)) {
@@ -236,6 +258,7 @@ Examples:
   node scripts/sync-github-secrets.mjs push-all local
   node scripts/sync-github-secrets.mjs push-secrets staging
   node scripts/sync-github-secrets.mjs push-vars production
+  node scripts/sync-github-secrets.mjs push-env-secret OPENAI_API_KEY
   node scripts/sync-github-secrets.mjs list-secrets
   node scripts/sync-github-secrets.mjs list-vars
   node scripts/sync-github-secrets.mjs delete-secret OLD_API_KEY
@@ -280,6 +303,10 @@ switch (command) {
     break;
   case 'list-envs':
     listEnvs();
+    break;
+  case 'push-env-secret':
+    if (!arg1) { console.error('Error: secret name required'); process.exit(1); }
+    pushEnvSecret(arg1);
     break;
   default:
     showHelp();

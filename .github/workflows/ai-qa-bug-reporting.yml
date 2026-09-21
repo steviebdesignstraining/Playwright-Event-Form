@@ -1,0 +1,307 @@
+name: AI QA Bug Reporting Pipeline
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+jobs:
+
+  run-tests:
+    name: Run Playwright Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Clean previous test results
+        run: |
+          rm -rf allure-results
+          rm -rf allure-report
+          rm -rf playwright-report
+          rm -rf test-results
+          rm -rf failure-data.json
+          rm -rf bug-analysis.json
+          rm -rf validated-bug.json
+          rm -rf created-issues.json
+
+      - name: Run Playwright tests
+        env:
+          DOTENVX_KEY: ${{ secrets.DOTENVX_KEY }}
+        run: npm run test -- --workers=4 --retries=1 --reporter=json
+        continue-on-error: true
+        id: test-run
+
+      - name: Check if tests failed
+        id: check-failure
+        if: always()
+        run: |
+          if [ -f "playwright-report/results.json" ]; then
+            FAILED=$(node -e "const r=require('./playwright-report/results.json'); console.log(r.tests.filter(t=>t.outcome==='failed').length>0?'true':'false')")
+            echo "has_failure=$FAILED" >> $GITHUB_OUTPUT
+          else
+            echo "has_failure=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate failure data
+        if: steps.check-failure.outputs.has_failure == 'true'
+        run: npx tsx scripts/generate-failure-data.ts
+
+      - name: Upload Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-evidence
+          path: |
+            test-results/
+            playwright-report/
+            allure-results/
+            failure-data.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  analyse-failure:
+    name: AI Failure Analysis
+    needs: run-tests
+    if: needs.run-tests.outputs.has_failure == 'true' || always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: playwright-evidence
+          path: .
+
+      - name: Verify failure data
+        run: |
+          if [ ! -f "failure-data.json" ]; then
+            echo "No failure-data.json found. Skipping AI analysis."
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Run OpenAI analysis
+        if: steps.verify-failure-data.outputs.skip != 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: npx tsx scripts/analyse-failure.ts
+
+      - name: Validate with Copilot
+        if: steps.verify-failure-data.outputs.skip != 'true'
+        run: npx tsx scripts/validate-with-copilot.ts
+
+      - name: Upload analysis results
+        if: steps.verify-failure-data.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-analysis
+          path: |
+            bug-analysis.json
+            validated-bug.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  create-issue:
+    name: Create GitHub Issue
+    needs: [run-tests, analyse-failure]
+    if: always() && needs.run-tests.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download analysis
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-analysis
+          path: .
+
+      - name: Check for validated bugs
+        id: check-bugs
+        run: |
+          if [ ! -f "validated-bug.json" ]; then
+            echo "no_bugs=true" >> $GITHUB_OUTPUT
+          else
+            PRODUCT_BUG_COUNT=$(node -e "const d=require('./validated-bug.json'); console.log(d.filter(x=>x.analysis&&x.analysis.classification==='PRODUCT_BUG').length)")
+            echo "product_bug_count=$PRODUCT_BUG_COUNT" >> $GITHUB_OUTPUT
+            echo "no_bugs=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Issues
+        if: steps.check-bugs.outputs.no_bugs == 'false' && steps.check-bugs.outputs.product_bug_count != '0'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx tsx scripts/create-github-issue.ts
+
+      - name: Upload created issues
+        if: steps.check-bugs.outputs.no_bugs == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: created-issues
+          path: created-issues.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  add-to-project:
+    name: Add to GitHub Project
+    needs: [run-tests, create-issue]
+    if: always() && needs.create-issue.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download created issues
+        uses: actions/download-artifact@v4
+        with:
+          name: created-issues
+          path: .
+
+      - name: Add to project
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME || 'AI QA Bug Reporting' }}
+        run: npx tsx scripts/add-to-project.ts
+
+  generate-allure-report:
+    name: Generate Allure Report
+    needs: run-tests
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Download Allure results
+        uses: actions/download-artifact@v4
+        with:
+          name: playwright-evidence
+          path: .
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Allure HTML report
+        run: |
+          rm -rf allure-report
+          npx allure generate allure-results \
+            --clean \
+            -o allure-report
+          touch allure-report/.nojekyll
+
+      - name: Upload Allure report
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report
+          path: allure-report/
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy-allure:
+    name: Deploy Allure to GitHub Pages
+    needs: generate-allure-report
+    if: always() && needs.generate-allure-report.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+
+      - name: Download Allure report
+        uses: actions/download-artifact@v4
+        with:
+          name: allure-report
+          path: allure-report
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: allure-report
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

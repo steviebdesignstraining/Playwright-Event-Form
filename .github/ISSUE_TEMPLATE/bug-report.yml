@@ -1,0 +1,85 @@
+name: Bug Report
+description: Report a bug found during testing
+title: '[BUG] '
+labels: ['bug', 'manual']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Automated QA Pipeline:** This issue will be analysed by OpenAI and validated by GitHub Copilot before entering the bug project.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of the bug
+      placeholder: What happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: List the steps to reproduce the issue
+      placeholder: |
+        1. Navigate to ...
+        2. Click on ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Result
+      description: What should have happened
+      placeholder: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Result
+      description: What actually happened
+      placeholder: Observed behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Where did you observe this bug?
+      value: |
+        - Browser: Chromium
+        - CI: Local
+        - Branch: main
+        - Commit: (latest)
+
+  - type: attachments
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Upload screenshots, logs, traces, or recordings
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Critical
+        - High
+        - Medium
+        - Low
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P1
+        - P2
+        - P3
+        - P4

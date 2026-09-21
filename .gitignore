@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Local environment secrets (NEVER commit)
+.env
+.env.*
+!.env.example
+.venv/
+
+# Test/build output
+allure-results/
+allure-report/
+playwright-report/
+test-results/
+
+# AI QA Pipeline data (contains failure details)
+failure-data.json
+bug-analysis.json
+validated-bug.json
+created-issues.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -90,14 +90,47 @@ Choose your preferred execution method:
 
 Manage environment-specific secrets using the built-in CLI:
 
-| Command                          | Description                                         |
-| :------------------------------- | :-------------------------------------------------- |
-| `npm run secrets:init`           | Initialise venv structure with example environments |
-| `npm run secrets:push local`     | Push .env.local to .venv/.venv.local               |
-| `npm run secrets:pull staging`   | Pull .venv/.venv.staging to .env.local             |
-| `npm run secrets:list`           | List available venv environments                    |
+| Command                              | Description                                         |
+| :----------------------------------- | :-------------------------------------------------- |
+| `npm run secrets:init`               | Initialise venv structure with example environments |
+| `npm run secrets:push local`         | Push .env.local to .venv/.venv.local               |
+| `npm run secrets:pull staging`       | Pull .venv/.venv.staging to .env.local             |
+| `npm run secrets:list`               | List available venv environments                    |
+| `npm run gh-secrets:push-ai`         | Push OPENAI_API_KEY from .env.local to GitHub secrets |
+| `npm run gh-secrets:list`            | List GitHub repository secrets                      |
 
------
+To add a new secret to GitHub:
+1. Add it to `.env.local` (e.g. `OPENAI_API_KEY=sk-...`)
+2. Run `npm run gh-secrets:push-ai OPENAI_API_KEY`
+
+ -----
+
+### AI QA Bug Reporting Pipeline
+
+Automated defect detection and reporting:
+
+``` Playwright test fails
+       ↓
+  Generate failure-data.json
+       ↓
+  OpenAI analysis → bug-analysis.json
+       ↓
+  Copilot validation → validated-bug.json
+       ↓
+  Create GitHub Issue → GitHub Project
+```
+
+| Command                              | Description                                         |
+| :----------------------------------- | :-------------------------------------------------- |
+| `npm run generate:failure-data`      | Parse Playwright failures into failure-data.json     |
+| `npm run ai:analyse`                 | Send failures to OpenAI for defect analysis          |
+| `npm run ai:validate`                | Validate draft bugs with GitHub Copilot              |
+| `npm run ai:create-issues`           | Create GitHub Issues from validated bugs             |
+| `npm run ai:add-to-project`          | Add issues to GitHub Project board                   |
+
+See `.github/workflows/ai-qa-bug-reporting.yml` for the full CI/CD pipeline.
+
+ -----
 
 ### CI/CD Pipeline and Report Dashboard
 
