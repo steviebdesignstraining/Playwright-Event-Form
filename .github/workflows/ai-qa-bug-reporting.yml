@@ -13,6 +13,7 @@ permissions:
   pull-requests: read
   pages: write
   id-token: write
+  repository-projects: write
 
 concurrency:
   group: "pages"
@@ -22,6 +23,10 @@ env:
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 jobs:
+
+  # ============================================================
+  # 1. RUN PLAYWRIGHT
+  # ============================================================
 
   run-tests:
     name: Run Playwright Tests
@@ -60,71 +65,115 @@ jobs:
           rm -f created-issues.json
 
       - name: Run Playwright tests
+        id: test-run
         env:
           DOTENVX_KEY: ${{ secrets.DOTENVX_KEY }}
         run: npm run test -- --workers=4 --retries=1
         continue-on-error: true
-        id: test-run
+
+      # --------------------------------------------------------
+      # IMPORTANT:
+      # Inspect Playwright's JSON reporter structure.
+      # Do NOT use result.tests.
+      # --------------------------------------------------------
 
       - name: Check if tests failed
         id: check-failure
         if: always()
         run: |
+          echo "Checking Playwright results..."
+
           if [ ! -f "playwright-report/results.json" ]; then
-            echo "has_failure=false" >> "$GITHUB_OUTPUT"
             echo "No Playwright results.json found."
+            echo "has_failure=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          FAILED=$(node - <<'NODE'
+          FAILED=$(node <<'NODE'
           const fs = require('fs');
 
-          const result = JSON.parse(
-            fs.readFileSync('playwright-report/results.json', 'utf8')
-          );
+          const file = 'playwright-report/results.json';
+          const result = JSON.parse(fs.readFileSync(file, 'utf8'));
 
-          function hasFailedTests(suites = []) {
+          let failures = [];
+
+          function walkSuites(suites = []) {
             for (const suite of suites) {
+
               for (const spec of suite.specs || []) {
+
                 for (const test of spec.tests || []) {
-                  if ((test.results || []).some(r => r.status === 'failed')) {
-                    return true;
+
+                  for (const testResult of test.results || []) {
+
+                    if (testResult.status === 'failed') {
+                      failures.push({
+                        test: spec.title,
+                        project: test.projectName,
+                        status: testResult.status,
+                        retry: testResult.retry
+                      });
+                    }
+
                   }
                 }
               }
 
-              if (hasFailedTests(suite.suites || [])) {
-                return true;
-              }
+              walkSuites(suite.suites || []);
             }
-
-            return false;
           }
 
-          console.log(
-            hasFailedTests(result.suites || [])
-              ? 'true'
-              : 'false'
-          );
+          walkSuites(result.suites || []);
+
+          console.log(`Detected ${failures.length} failed Playwright result(s).`);
+
+          for (const failure of failures) {
+            console.log(
+              `FAILED: ${failure.project} | ${failure.test} | retry=${failure.retry}`
+            );
+          }
+
+          console.log(failures.length > 0 ? 'true' : 'false');
           NODE
           )
 
           echo "has_failure=$FAILED" >> "$GITHUB_OUTPUT"
-          echo "Playwright failures detected: $FAILED"
+
+          echo "========================================"
+          echo "Playwright failure status: $FAILED"
+          echo "========================================"
+
+      # --------------------------------------------------------
+      # Generate failure data whenever a failure was detected.
+      # --------------------------------------------------------
 
       - name: Generate failure data
         if: steps.check-failure.outputs.has_failure == 'true'
         run: npm run generate:failure-data
 
-      - name: Verify generated failure data
+      - name: Verify failure data
         if: always()
         run: |
+          echo "Checking generated failure data..."
+
           if [ -f "failure-data.json" ]; then
-            echo "failure-data.json generated successfully."
+            echo "failure-data.json exists."
+
+            echo "Number of failures:"
+            node -e "
+              const data = require('./failure-data.json');
+              console.log(data.length);
+            "
+
+            echo "Failure data:"
             cat failure-data.json
           else
             echo "No failure-data.json generated."
           fi
+
+      # --------------------------------------------------------
+      # Upload everything needed by downstream jobs.
+      # --------------------------------------------------------
 
       - name: Upload Playwright evidence
         if: always()
@@ -139,12 +188,23 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+
+  # ============================================================
+  # 2. AI FAILURE ANALYSIS
+  # ============================================================
+
   analyse-failure:
-    name: AI Failure Analysis
+    name: AI Feature Analysis
     needs: run-tests
+
+    # Run this only when Playwright actually detected a failure.
     if: needs.run-tests.outputs.has_failure == 'true'
+
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
+    outputs:
+      analysis_complete: ${{ steps.analysis-status.outputs.complete }}
 
     steps:
 
@@ -160,7 +220,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Download evidence
+      - name: Download Playwright evidence
         uses: actions/download-artifact@v4
         with:
           name: playwright-evidence
@@ -170,43 +230,94 @@ jobs:
         id: verify-failure-data
         run: |
           if [ ! -f "failure-data.json" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "No failure-data.json found."
-            exit 0
+            echo "ERROR: failure-data.json was not downloaded."
+            exit 1
           fi
 
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "failure-data.json found."
+          FAILURE_COUNT=$(node -e "
+            const data = require('./failure-data.json');
+            console.log(data.length);
+          ")
+
+          echo "Failure records: $FAILURE_COUNT"
+
+          if [ "$FAILURE_COUNT" -eq 0 ]; then
+            echo "No failures available for AI analysis."
+            exit 1
+          fi
 
       - name: Run OpenAI analysis
-        if: steps.verify-failure-data.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: npx tsx scripts/analyse-failure.ts
+        run: |
+          echo "========================================"
+          echo "Running AI Feature Analysis"
+          echo "========================================"
+
+          npx tsx scripts/analyse-failure.ts
 
       - name: Validate with Copilot
-        if: steps.verify-failure-data.outputs.skip != 'true'
-        run: npx tsx scripts/validate-with-copilot.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+        run: |
+          echo "========================================"
+          echo "Validating AI-generated bug reports"
+          echo "========================================"
 
-      - name: Upload analysis results
-        if: steps.verify-failure-data.outputs.skip != 'true'
+          npx tsx scripts/validate-with-copilot.ts
+
+      - name: Verify analysis output
+        id: analysis-status
+        run: |
+          if [ ! -f "bug-analysis.json" ]; then
+            echo "ERROR: bug-analysis.json was not generated."
+            exit 1
+          fi
+
+          if [ ! -f "validated-bug.json" ]; then
+            echo "ERROR: validated-bug.json was not generated."
+            exit 1
+          fi
+
+          echo "complete=true" >> "$GITHUB_OUTPUT"
+
+          echo "AI analysis completed successfully."
+
+      - name: Upload AI analysis
         uses: actions/upload-artifact@v4
         with:
           name: ai-analysis
           path: |
             bug-analysis.json
             validated-bug.json
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
+
+
+  # ============================================================
+  # 3. CREATE GITHUB ISSUE
+  # ============================================================
 
   create-issue:
     name: Create GitHub Issue
-    needs: [run-tests, analyse-failure]
+    needs:
+      - run-tests
+      - analyse-failure
+
+    # always() is required because analyse-failure is conditionally
+    # executed. We then explicitly check its result.
     if: |
+      always() &&
       needs.run-tests.result == 'success' &&
+      needs.run-tests.outputs.has_failure == 'true' &&
       needs.analyse-failure.result == 'success'
+
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
+    outputs:
+      issues_created: ${{ steps.check-bugs.outputs.issues_created }}
 
     steps:
 
@@ -222,46 +333,95 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Download analysis
-        if: always()
-        continue-on-error: true
+      - name: Download AI analysis
         uses: actions/download-artifact@v4
         with:
           name: ai-analysis
           path: .
 
-      - name: Check for validated bugs
-        if: always()
+      - name: Check validated bugs
         id: check-bugs
         run: |
           if [ ! -f "validated-bug.json" ]; then
-            echo "no_bugs=true" >> $GITHUB_OUTPUT
-            echo "Skipping issue creation — no validated bugs found."
+            echo "ERROR: validated-bug.json not found."
+            exit 1
+          fi
+
+          PRODUCT_BUG_COUNT=$(node <<'NODE'
+          const fs = require('fs');
+
+          const data = JSON.parse(
+            fs.readFileSync('validated-bug.json', 'utf8')
+          );
+
+          const count = data.filter(
+            x =>
+              x.classification === 'PRODUCT_BUG' ||
+              x.analysis?.classification === 'PRODUCT_BUG'
+          ).length;
+
+          console.log(count);
+          NODE
+          )
+
+          echo "Product bugs detected: $PRODUCT_BUG_COUNT"
+
+          if [ "$PRODUCT_BUG_COUNT" -eq 0 ]; then
+            echo "issues_created=false" >> "$GITHUB_OUTPUT"
+            echo "No PRODUCT_BUG records found."
             exit 0
           fi
-          PRODUCT_BUG_COUNT=$(node -e "const d=require('./validated-bug.json'); console.log(d.filter(x=>x.analysis&&x.analysis.classification==='PRODUCT_BUG').length)")
-          echo "product_bug_count=$PRODUCT_BUG_COUNT" >> $GITHUB_OUTPUT
-          echo "no_bugs=false" >> $GITHUB_OUTPUT
+
+          echo "issues_created=true" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Issues
-        if: steps.check-bugs.outputs.no_bugs == 'false' && steps.check-bugs.outputs.product_bug_count != '0'
+        if: steps.check-bugs.outputs.issues_created == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx tsx scripts/create-github-issue.ts
+        run: |
+          echo "========================================"
+          echo "Creating GitHub Issues"
+          echo "========================================"
+
+          npx tsx scripts/create-github-issue.ts
+
+      - name: Verify created issues
+        if: steps.check-bugs.outputs.issues_created == 'true'
+        run: |
+          if [ ! -f "created-issues.json" ]; then
+            echo "ERROR: create-github-issue.ts did not create created-issues.json"
+            exit 1
+          fi
+
+          echo "Created issues:"
+          cat created-issues.json
 
       - name: Upload created issues
-        if: steps.check-bugs.outputs.no_bugs == 'false'
+        if: steps.check-bugs.outputs.issues_created == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: created-issues
           path: created-issues.json
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
+
+
+  # ============================================================
+  # 4. ADD ISSUES TO GITHUB PROJECT
+  # ============================================================
 
   add-to-project:
     name: Add to GitHub Project
-    needs: [run-tests, create-issue]
-    if: always() && needs.create-issue.result == 'success'
+    needs:
+      - run-tests
+      - create-issue
+
+    if: |
+      always() &&
+      needs.run-tests.result == 'success' &&
+      needs.create-issue.result == 'success' &&
+      needs.create-issue.outputs.issues_created == 'true'
+
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -280,30 +440,37 @@ jobs:
         run: npm ci
 
       - name: Download created issues
-        if: always()
-        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: created-issues
           path: .
 
-      - name: Check for issues to add
-        if: always()
-        id: check-issues
+      - name: Verify created issues
         run: |
           if [ ! -f "created-issues.json" ]; then
-            echo "no_issues=true" >> $GITHUB_OUTPUT
-            echo "No issues to add to project."
-            exit 0
+            echo "ERROR: created-issues.json not found."
+            exit 1
           fi
-          echo "no_issues=false" >> $GITHUB_OUTPUT
 
-      - name: Add to project
-        if: steps.check-issues.outputs.no_issues == 'false'
+          echo "Issues to add:"
+          cat created-issues.json
+
+      - name: Add issues to GitHub Project
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PROJECT_NAME: ${{ vars.PROJECT_NAME || 'AI QA Bug Reporting' }}
-        run: npx tsx scripts/add-to-project.ts
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+        run: |
+          echo "========================================"
+          echo "Adding issues to GitHub Project"
+          echo "Project: $PROJECT_NAME"
+          echo "========================================"
+
+          npx tsx scripts/add-to-project.ts
+
+
+  # ============================================================
+  # 5. ALLURE
+  # ============================================================
 
   generate-allure-report:
     name: Generate Allure Report
@@ -335,9 +502,16 @@ jobs:
       - name: Generate Allure HTML report
         run: |
           rm -rf allure-report
+
+          if [ ! -d "allure-results" ]; then
+            echo "No Allure results found."
+            exit 1
+          fi
+
           npx allure generate allure-results \
             --clean \
             -o allure-report
+
           touch allure-report/.nojekyll
 
       - name: Upload Allure report
@@ -348,10 +522,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+
+  # ============================================================
+  # 6. DEPLOY ALLURE
+  # ============================================================
+
   deploy-allure:
     name: Deploy Allure to GitHub Pages
     needs: generate-allure-report
     if: always() && needs.generate-allure-report.result == 'success'
+
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
