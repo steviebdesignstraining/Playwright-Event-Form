@@ -112,7 +112,7 @@ Return valid JSON only with this structure:
       headers: {
         'Authorization': `Bearer ${token}`,
         'Accept': 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-05',
+        'X-GitHub-Api-Version': '2022-11-28',
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -180,14 +180,27 @@ async function main() {
     mkdirSync(outputDir, { recursive: true });
   }
 
-  const outputData = results.map(({ analysis, validation }) => ({
-    ...analysis,
-    validation: {
-      valid: validation.valid,
-      issues: validation.issues,
-      correctedBug: validation.correctedBug,
-    },
-  }));
+  const outputData = results.map(({ analysis, validation }) => {
+    const base = validation.correctedBug ?? analysis;
+    return {
+      title: base.title || analysis.title,
+      summary: base.summary || '',
+      stepsToReproduce: base.stepsToReproduce || [],
+      expectedResult: base.expectedResult || '',
+      actualResult: base.actualResult || '',
+      failureType: base.failureType || 'Unknown',
+      severity: base.severity || 'Medium',
+      priority: base.priority || 'P3',
+      classification: base.classification || 'UNKNOWN',
+      confidence: typeof base.confidence === 'number' ? base.confidence : 0,
+      relevantEvidence: base.relevantEvidence || [],
+      error: base.error ?? analysis.error,
+      validation: {
+        valid: validation.valid,
+        issues: validation.issues,
+      },
+    };
+  });
 
   writeFileSync(validatedPath, JSON.stringify(outputData, null, 2));
   console.log(`Validated bugs written to: ${validatedPath}`);

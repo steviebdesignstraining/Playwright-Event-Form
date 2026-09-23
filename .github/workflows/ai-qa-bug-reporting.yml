@@ -390,61 +390,44 @@ jobs:
             exit 1
           fi
 
-          node <<'NODE'
-          const fs = require('fs');
+           node <<'NODE'
+           const fs = require('fs');
 
-          const data = JSON.parse(
-            fs.readFileSync('validated-bug.json', 'utf8')
-          );
+           const data = JSON.parse(
+             fs.readFileSync('validated-bug.json', 'utf8')
+           );
 
-          const records = Array.isArray(data) ? data : [data];
+           const records = Array.isArray(data) ? data : [data];
 
-          const bugs = records.filter(item => {
+           const VALID_CLASSIFICATIONS = ['PRODUCT_BUG'];
 
-            const classification =
-              item.classification ??
-              item.analysis?.classification ??
-              item.validation?.classification;
+           const bugs = records.filter(item => {
+             const classification = item.classification || 'UNKNOWN';
+             return VALID_CLASSIFICATIONS.includes(classification);
+           });
 
-            const isInfrastructure =
-              classification === 'TEST_INFRASTRUCTURE';
+           const skipped = records.length - bugs.length;
 
-            const isTestIssue =
-              classification === 'TEST_DEFECT';
+           console.log('========================================');
+           console.log('Validated Bug Summary');
+           console.log('========================================');
+           console.log(`Total records: ${records.length}`);
+           console.log(`Bug candidates: ${bugs.length}`);
+           console.log(`Skipped (UNKNOWN/TEST_DEFECT/TEST_INFRASTRUCTURE): ${skipped}`);
 
-            return !isInfrastructure && !isTestIssue;
-          });
+           for (const bug of bugs) {
+             const classification = bug.classification || 'UNKNOWN';
+             console.log(`BUG: ${bug.title}`);
+             console.log(`Classification: ${classification}`);
+           }
 
-          console.log('========================================');
-          console.log('Validated Bug Summary');
-          console.log('========================================');
-          console.log(`Total records: ${records.length}`);
-          console.log(`Bug candidates: ${bugs.length}`);
+           console.log('========================================');
 
-          for (const bug of bugs) {
-            const title =
-              bug.title ??
-              bug.test ??
-              bug.analysis?.title ??
-              'Playwright test failure';
-
-            const classification =
-              bug.classification ??
-              bug.analysis?.classification ??
-              bug.validation?.classification ??
-              'UNKNOWN';
-
-            console.log(`BUG: ${title}`);
-            console.log(`Classification: ${classification}`);
-          }
-
-          console.log('========================================');
-
-          fs.appendFileSync(
-            process.env.GITHUB_OUTPUT,
-            `issues_created=${bugs.length > 0 ? 'true' : 'false'}\n`
-          );
-          NODE
+           fs.appendFileSync(
+             process.env.GITHUB_OUTPUT,
+             `issues_created=${bugs.length > 0 ? 'true' : 'false'}\n`
+           );
+           NODE
 
       - name: Create GitHub Issues
         if: steps.check-bugs.outputs.issues_created == 'true'

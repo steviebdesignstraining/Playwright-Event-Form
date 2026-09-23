@@ -116,7 +116,7 @@ ${bug.actualResult}
     headers: {
       'Authorization': `Bearer ${token}`,
       'Accept': 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-05',
+      'X-GitHub-Api-Version': '2022-11-28',
       'Content-Type': 'application/json',
       'User-Agent': 'AI-QA-Bug-Reporting',
     },
@@ -138,7 +138,7 @@ ${bug.actualResult}
 async function main() {
   console.log('Creating GitHub Issues from validated bugs...');
 
-  const token = process.env.GITHUB_TOKEN || process.env.GITHUB_TOKEN;
+  const token = process.env.GITHUB_TOKEN;
   if (!token) {
     console.error('GITHUB_TOKEN environment variable is not set.');
     process.exit(1);
@@ -149,22 +149,32 @@ async function main() {
   const { workflowRunUrl } = getWorkflowRunInfo();
 
   const createdIssues: Array<{ bug: BugAnalysis; issue: CreatedIssue; labels: string[] }> = [];
+  const failedIssues: Array<{ bug: BugAnalysis; error: string }> = [];
+
+  console.log('');
+  console.log('========================================');
+  console.log('GitHub Issue Creation');
+  console.log('========================================');
+  console.log(`Bug candidates: ${bugs.length}`);
+  console.log('========================================');
 
   for (const bug of bugs) {
     const classification = bug.classification || 'UNKNOWN';
 
     if (classification === 'TEST_INFRASTRUCTURE' || classification === 'TEST_DEFECT') {
-      console.log(`Skipping "${bug.title}" — classification is ${classification} (infrastructure/test issues excluded from issue creation).`);
+      console.log(`  Skipping "${bug.title}" — classification is ${classification} (infrastructure/test issues excluded).`);
       continue;
     }
 
-    console.log(`Creating issue: [${classification}] ${bug.title}`);
+    console.log(`  Creating issue: [${classification}] ${bug.title}`);
     try {
       const issue = await createIssue(bug, owner, repo, token, workflowRunUrl);
       console.log(`  → Issue #${issue.number}: ${issue.html_url}`);
       createdIssues.push({ bug, issue, labels: [] });
     } catch (error) {
-      console.error(`  → Failed: ${error instanceof Error ? error.message : error}`);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  → Failed: ${message}`);
+      failedIssues.push({ bug, error: message });
     }
   }
 
@@ -175,6 +185,22 @@ async function main() {
   }
 
   writeFileSync(outputPath, JSON.stringify(createdIssues, null, 2));
+
+  console.log('');
+  console.log('========================================');
+  console.log('GitHub Issue Creation Summary');
+  console.log('========================================');
+  console.log(`Bug candidates: ${bugs.length}`);
+  console.log(`Issues created: ${createdIssues.length}`);
+  console.log(`Issues failed: ${failedIssues.length}`);
+  console.log('========================================');
+
+  if (failedIssues.length > 0) {
+    console.error('');
+    console.error('ERROR: GitHub issue creation failed for some bugs.');
+    process.exit(1);
+  }
+
   console.log(`Created issues written to: ${outputPath}`);
 }
 
