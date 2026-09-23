@@ -45,8 +45,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
 const MODEL_FALLBACKS = ['gpt-5.6-luna', 'gpt-4o', 'gpt-4o-mini'];
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 1000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 2000;
 
 function loadFailureData(): FailureData[] {
   const path = join(rootDir, 'failure-data.json');
@@ -184,11 +184,12 @@ async function callOpenAI(
         { role: 'system', content: prompt },
         { role: 'user', content: evidence },
       ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
+      text: {
+        format: {
+          type: 'json_schema',
           name: 'bug_analysis',
           schema: BUG_ANALYSIS_SCHEMA,
+          strict: true,
         },
       },
     }),
@@ -213,6 +214,7 @@ async function callOpenAI(
       type?: string;
       content?: Array<{ type?: string; text?: string }>;
     }>;
+    output_text?: string;
     error?: { message: string };
   };
 
@@ -220,13 +222,15 @@ async function callOpenAI(
     throw new Error(`OpenAI API error: ${body.error.message}`);
   }
 
-  let jsonText = '';
+  let jsonText = body.output_text || '';
 
-  for (const output of body.output || []) {
-    if (output.type === 'message' || output.type === 'function_call') {
-      for (const content of output.content || []) {
-        if (content.type === 'output_text' && content.text) {
-          jsonText = content.text;
+  if (!jsonText) {
+    for (const output of body.output || []) {
+      if (output.type === 'message' || output.type === 'function_call') {
+        for (const content of output.content || []) {
+          if (content.type === 'output_text' && content.text) {
+            jsonText = content.text;
+          }
         }
       }
     }
