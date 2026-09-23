@@ -89,6 +89,7 @@ jobs:
           if [ ! -f "$RESULTS_FILE" ]; then
             echo "No Playwright results.json found at $RESULTS_FILE"
             echo "has_failure=false" >> "$GITHUB_OUTPUT"
+            echo "failure_count=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -98,7 +99,7 @@ jobs:
           const file = 'test-results/results.json';
           const result = JSON.parse(fs.readFileSync(file, 'utf8'));
 
-          const failures = [];
+          const failures = new Map();
 
           function walkSuites(suites = []) {
             for (const suite of suites) {
@@ -107,16 +108,24 @@ jobs:
 
                 for (const test of spec.tests || []) {
 
-                  for (const testResult of test.results || []) {
+                  const failedResults = (test.results || [])
+                    .filter(result => result.status === 'failed');
 
-                    if (testResult.status === 'failed') {
-                      failures.push({
-                        test: spec.title,
-                        project: test.projectName || 'unknown',
-                        retry: testResult.retry ?? 0
-                      });
-                    }
+                  if (failedResults.length === 0) {
+                    continue;
+                  }
 
+                  const project = test.projectName || 'unknown';
+
+                  const key = `${project}::${spec.title}`;
+
+                  if (!failures.has(key)) {
+                    failures.set(key, {
+                      test: spec.title,
+                      project,
+                      attempts: failedResults.length,
+                      retries: failedResults.map(r => r.retry ?? 0)
+                    });
                   }
                 }
               }
@@ -127,30 +136,37 @@ jobs:
 
           walkSuites(result.suites || []);
 
+          const uniqueFailures = [...failures.values()];
+
           console.log('');
           console.log('========================================');
           console.log('Playwright Failure Summary');
           console.log('========================================');
-          console.log(`Failed results: ${failures.length}`);
+          console.log(`Unique failed tests: ${uniqueFailures.length}`);
 
-          for (const failure of failures) {
+          for (const failure of uniqueFailures) {
             console.log(
-              `FAILED: [${failure.project}] ${failure.test} | retry=${failure.retry}`
+              `FAILED: [${failure.project}] ${failure.test} | attempts=${failure.attempts}`
             );
           }
 
           console.log('========================================');
 
-          const hasFailure = failures.length > 0 ? 'true' : 'false';
+          const hasFailure =
+            uniqueFailures.length > 0 ? 'true' : 'false';
 
           fs.appendFileSync(
             process.env.GITHUB_OUTPUT,
             `has_failure=${hasFailure}\n`
           );
 
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `failure_count=${uniqueFailures.length}\n`
+          );
+
           console.log(`has_failure=${hasFailure}`);
           NODE
-
       # --------------------------------------------------------
       # Generate failure data whenever a failure was detected.
       # --------------------------------------------------------
@@ -383,28 +399,50 @@ jobs:
 
           const records = Array.isArray(data) ? data : [data];
 
-          const productBugs = records.filter(item => {
+          const bugs = records.filter(item => {
+
             const classification =
               item.classification ??
               item.analysis?.classification ??
               item.validation?.classification;
 
-            return classification === 'PRODUCT_BUG';
+            const isInfrastructure =
+              classification === 'TEST_INFRASTRUCTURE';
+
+            const isTestIssue =
+              classification === 'TEST_DEFECT';
+
+            return !isInfrastructure && !isTestIssue;
           });
 
           console.log('========================================');
           console.log('Validated Bug Summary');
           console.log('========================================');
           console.log(`Total records: ${records.length}`);
-          console.log(`Product bugs: ${productBugs.length}`);
-          console.log('========================================');
+          console.log(`Bug candidates: ${bugs.length}`);
 
-          const output =
-            `issues_created=${productBugs.length > 0 ? 'true' : 'false'}\n`;
+          for (const bug of bugs) {
+            const title =
+              bug.title ??
+              bug.test ??
+              bug.analysis?.title ??
+              'Playwright test failure';
+
+            const classification =
+              bug.classification ??
+              bug.analysis?.classification ??
+              bug.validation?.classification ??
+              'UNKNOWN';
+
+            console.log(`BUG: ${title}`);
+            console.log(`Classification: ${classification}`);
+          }
+
+          console.log('========================================');
 
           fs.appendFileSync(
             process.env.GITHUB_OUTPUT,
-            output
+            `issues_created=${bugs.length > 0 ? 'true' : 'false'}\n`
           );
           NODE
 

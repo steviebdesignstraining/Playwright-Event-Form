@@ -15,6 +15,7 @@ interface BugAnalysis {
   classification: string;
   confidence: number;
   relevantEvidence?: string[];
+  error?: string;
 }
 
 interface CreatedIssue {
@@ -66,9 +67,16 @@ function loadValidatedBugs(): Array<BugAnalysis & { validation?: { valid: boolea
 async function createIssue(bug: BugAnalysis, owner: string, repo: string, token: string, workflowRunUrl: string): Promise<CreatedIssue> {
   const stepsList = bug.stepsToReproduce.map((step, i) => `${i + 1}. ${step}`).join('\n');
 
+  const classificationLabel = bug.classification === 'PRODUCT_BUG' ? 'Product Bug' : bug.classification;
+
   const body = `## Summary
 
 ${bug.summary}
+
+## AI Classification
+
+- **Classification**: ${classificationLabel}
+- **Confidence**: ${(bug.confidence * 100).toFixed(0)}%
 
 ## Steps to Reproduce
 
@@ -88,7 +96,7 @@ ${bug.actualResult}
 
 ## Environment
 
-- Browser: ${bug.failureType === 'UI' ? 'Chromium' : 'API'}
+- Failure Type: ${bug.failureType}
 - CI: GitHub Actions
 - Branch: unknown
 - Commit: unknown
@@ -113,7 +121,7 @@ ${bug.actualResult}
       'User-Agent': 'AI-QA-Bug-Reporting',
     },
     body: JSON.stringify({
-      title: bug.title,
+      title: `[${classificationLabel}] ${bug.title}`,
       body,
       labels: [bug.priority, bug.severity, `failure:${bug.failureType.toLowerCase()}`, `classification:${bug.classification.toLowerCase()}`],
     }),
@@ -143,12 +151,14 @@ async function main() {
   const createdIssues: Array<{ bug: BugAnalysis; issue: CreatedIssue; labels: string[] }> = [];
 
   for (const bug of bugs) {
-    if (!bug.classification || bug.classification !== 'PRODUCT_BUG') {
-      console.log(`Skipping "${bug.title}" — classification is ${bug.classification} (only PRODUCT_BUG auto-creates issues).`);
+    const classification = bug.classification || 'UNKNOWN';
+
+    if (classification === 'TEST_INFRASTRUCTURE' || classification === 'TEST_DEFECT') {
+      console.log(`Skipping "${bug.title}" — classification is ${classification} (infrastructure/test issues excluded from issue creation).`);
       continue;
     }
 
-    console.log(`Creating issue: ${bug.title}`);
+    console.log(`Creating issue: [${classification}] ${bug.title}`);
     try {
       const issue = await createIssue(bug, owner, repo, token, workflowRunUrl);
       console.log(`  → Issue #${issue.number}: ${issue.html_url}`);

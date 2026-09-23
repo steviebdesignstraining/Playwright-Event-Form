@@ -30,7 +30,7 @@ interface BugAnalysis {
   failureType: string;
   severity: string;
   priority: string;
-  classification: 'PRODUCT_BUG' | 'TEST_BUG' | 'FLAKY_TEST' | 'ENVIRONMENT_FAILURE' | 'DATA_FAILURE' | 'UNKNOWN';
+  classification: 'PRODUCT_BUG' | 'TEST_DEFECT' | 'TEST_INFRASTRUCTURE' | 'UNKNOWN';
   confidence: number;
   relevantEvidence?: string[];
   error?: string;
@@ -146,7 +146,7 @@ const BUG_ANALYSIS_SCHEMA = {
     failureType: { type: 'string', enum: ['UI', 'API', 'Data', 'Environment', 'Unknown'], description: 'Classification of failure by type' },
     severity: { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'], description: 'Severity of the failure' },
     priority: { type: 'string', enum: ['P1', 'P2', 'P3', 'P4'], description: 'Priority of the fix' },
-    classification: { type: 'string', enum: ['PRODUCT_BUG', 'TEST_BUG', 'FLAKY_TEST', 'ENVIRONMENT_FAILURE', 'DATA_FAILURE', 'UNKNOWN'], description: 'Whether this is a product bug or test issue' },
+    classification: { type: 'string', enum: ['PRODUCT_BUG', 'TEST_DEFECT', 'TEST_INFRASTRUCTURE', 'UNKNOWN'], description: 'Whether this is a product bug, test defect, test infrastructure issue, or unknown' },
     confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Confidence level 0.0-1.0' },
     relevantEvidence: { type: 'array', items: { type: 'string' }, description: 'Relevant evidence references', default: [] },
   },
@@ -157,6 +157,11 @@ const BUG_ANALYSIS_SCHEMA = {
 const SYSTEM_PROMPT = `You are an AI QA Defect Analysis Agent.
 
 Analyse the supplied Playwright test failure and convert the failure evidence into a structured software defect.
+
+PRODUCT_BUG = The application behaves incorrectly. A genuine software defect.
+TEST_DEFECT = The test expectation or implementation is wrong. The application may be working correctly.
+TEST_INFRASTRUCTURE = CI/test environment failure (browser crash, network timeout, environment unavailable).
+UNKNOWN = Insufficient evidence to classify confidently.
 
 Use ONLY the evidence provided. Do not invent application behaviour, reproduction steps, expected results, API responses, or environment information that is not present in the evidence.
 

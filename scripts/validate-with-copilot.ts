@@ -15,6 +15,7 @@ interface BugAnalysis {
   classification: string;
   confidence: number;
   relevantEvidence?: string[];
+  error?: string;
 }
 
 interface ValidationResult {
