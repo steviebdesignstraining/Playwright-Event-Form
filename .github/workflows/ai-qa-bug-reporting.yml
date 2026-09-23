@@ -80,22 +80,25 @@ jobs:
       - name: Check if tests failed
         id: check-failure
         if: always()
+        shell: bash
         run: |
           echo "Checking Playwright results..."
 
-          if [ ! -f "test-results/results.json" ]; then
-            echo "No Playwright results.json found."
+          RESULTS_FILE="test-results/results.json"
+
+          if [ ! -f "$RESULTS_FILE" ]; then
+            echo "No Playwright results.json found at $RESULTS_FILE"
             echo "has_failure=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          FAILED=$(node <<'NODE'
+          node <<'NODE'
           const fs = require('fs');
 
           const file = 'test-results/results.json';
           const result = JSON.parse(fs.readFileSync(file, 'utf8'));
 
-          let failures = [];
+          const failures = [];
 
           function walkSuites(suites = []) {
             for (const suite of suites) {
@@ -109,9 +112,8 @@ jobs:
                     if (testResult.status === 'failed') {
                       failures.push({
                         test: spec.title,
-                        project: test.projectName,
-                        status: testResult.status,
-                        retry: testResult.retry
+                        project: test.projectName || 'unknown',
+                        retry: testResult.retry ?? 0
                       });
                     }
 
@@ -125,23 +127,29 @@ jobs:
 
           walkSuites(result.suites || []);
 
-          console.log(`Detected ${failures.length} failed Playwright result(s).`);
+          console.log('');
+          console.log('========================================');
+          console.log('Playwright Failure Summary');
+          console.log('========================================');
+          console.log(`Failed results: ${failures.length}`);
 
           for (const failure of failures) {
             console.log(
-              `FAILED: ${failure.project} | ${failure.test} | retry=${failure.retry}`
+              `FAILED: [${failure.project}] ${failure.test} | retry=${failure.retry}`
             );
           }
 
-          console.log(failures.length > 0 ? 'true' : 'false');
+          console.log('========================================');
+
+          const hasFailure = failures.length > 0 ? 'true' : 'false';
+
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `has_failure=${hasFailure}\n`
+          );
+
+          console.log(`has_failure=${hasFailure}`);
           NODE
-          )
-
-          echo "has_failure=$FAILED" >> "$GITHUB_OUTPUT"
-
-          echo "========================================"
-          echo "Playwright failure status: $FAILED"
-          echo "========================================"
 
       # --------------------------------------------------------
       # Generate failure data whenever a failure was detected.
@@ -149,7 +157,24 @@ jobs:
 
       - name: Generate failure data
         if: steps.check-failure.outputs.has_failure == 'true'
-        run: npm run generate:failure-data
+        run: |
+          echo "========================================"
+          echo "Generating failure-data.json"
+          echo "========================================"
+
+          npm run generate:failure-data
+
+          if [ ! -f "failure-data.json" ]; then
+            echo "ERROR: generate-failure-data did not create failure-data.json"
+            exit 1
+          fi
+
+          echo "failure-data.json successfully generated."
+
+          node -e "
+            const data = require('./failure-data.json');
+            console.log('Failure records:', data.length);
+          "
 
       - name: Verify failure data
         if: always()
@@ -341,38 +366,46 @@ jobs:
 
       - name: Check validated bugs
         id: check-bugs
+        shell: bash
         run: |
           if [ ! -f "validated-bug.json" ]; then
             echo "ERROR: validated-bug.json not found."
             exit 1
           fi
 
-          PRODUCT_BUG_COUNT=$(node <<'NODE'
+          node <<'NODE'
           const fs = require('fs');
 
           const data = JSON.parse(
             fs.readFileSync('validated-bug.json', 'utf8')
           );
 
-          const count = data.filter(
-            x =>
-              x.classification === 'PRODUCT_BUG' ||
-              x.analysis?.classification === 'PRODUCT_BUG'
-          ).length;
+          const records = Array.isArray(data) ? data : [data];
 
-          console.log(count);
+          const productBugs = records.filter(item => {
+            const classification =
+              item.classification ??
+              item.analysis?.classification ??
+              item.validation?.classification;
+
+            return classification === 'PRODUCT_BUG';
+          });
+
+          console.log('========================================');
+          console.log('Validated Bug Summary');
+          console.log('========================================');
+          console.log(`Total records: ${records.length}`);
+          console.log(`Product bugs: ${productBugs.length}`);
+          console.log('========================================');
+
+          const output =
+            `issues_created=${productBugs.length > 0 ? 'true' : 'false'}\n`;
+
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            output
+          );
           NODE
-          )
-
-          echo "Product bugs detected: $PRODUCT_BUG_COUNT"
-
-          if [ "$PRODUCT_BUG_COUNT" -eq 0 ]; then
-            echo "issues_created=false" >> "$GITHUB_OUTPUT"
-            echo "No PRODUCT_BUG records found."
-            exit 0
-          fi
-
-          echo "issues_created=true" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Issues
         if: steps.check-bugs.outputs.issues_created == 'true'
