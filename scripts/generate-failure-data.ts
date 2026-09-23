@@ -22,37 +22,51 @@ interface FailureData {
   video?: string;
 }
 
-interface PlaywrightResult {
-  suiteId: string;
-  title: string;
-  outcome: string;
-  duration: number;
-  retries: number;
-  projectName: string;
-  workerId: string;
-  attachments?: Array<{ name: string; path?: string; contentType: string; body?: string }>;
+interface PlaywrightJsonResult {
+  config?: Record<string, unknown>;
+  suites: PlaywrightSuite[];
+  errors: unknown[];
+  stats: Record<string, unknown>;
 }
 
-interface PlaywrightJsonResult {
-  version: string;
-  startTime: string;
+interface PlaywrightSuite {
+  title?: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  specs?: PlaywrightSpec[];
+  suites?: PlaywrightSuite[];
+}
+
+interface PlaywrightSpec {
+  title: string;
+  ok: boolean;
+  line: number;
+  file?: string;
+  tests: PlaywrightTest[];
+}
+
+interface PlaywrightTest {
+  timeout: number;
+  expectedStatus: string;
+  projectId: string;
+  projectName: string;
+  results: PlaywrightTestResult[];
+}
+
+interface PlaywrightTestResult {
+  workerIndex: number;
+  parallelIndex: number;
+  status: string;
   duration: number;
-  success: boolean;
-  errors: string[];
-  tests: Array<{
-    fileId: string;
-    title: string;
-    outcome: string;
-    duration: number;
-    retries: number;
-    projectId: string;
-    projectName: string;
-    workerId: string;
-    attachments?: Array<{ name: string; path?: string; contentType: string; body?: string }>;
-    errors: Array<{ message: string; stack?: string; location?: { file: string; line: number; column: number } }>;
-    expected?: string;
-    actual?: string;
-  }>;
+  errors: Array<{ message: string; stack?: string; location?: { file: string; line: number; column: number } }>;
+  stdout: string[];
+  stderr: string[];
+  retry: number;
+  startTime: string;
+  annotations: Array<{ type: string; location: { file: string; line: number; column: number } }>;
+  attachments: Array<{ name: string; path?: string; contentType: string }>;
+  error?: { message: string; stack?: string };
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -149,45 +163,58 @@ function generateFailureData(): FailureData[] {
   const { branch, commit } = getGitInfo();
   const failures: FailureData[] = [];
 
-  for (const test of result.tests) {
-    if (test.outcome !== 'failed') continue;
+  function collectFailed(suites: PlaywrightSuite[]): void {
+    for (const suite of suites) {
+      if (suite.specs) {
+        for (const spec of suite.specs) {
+          for (const test of spec.tests) {
+            for (const res of test.results) {
+              if (res.status === 'failed') {
+                const errorSource = res.errors?.[0] || res.error;
+                const errorMessage = extractErrorMessage(errorSource);
+                const { expected, actual } = extractExpectedActual(res.errors?.[0]?.stack || res.error?.stack || res.errors?.[0]?.message);
+                const failureType = determineFailureType(errorMessage, test.projectName);
+                const { severity, priority } = classifySeverity(failureType, errorMessage);
 
-    const error = test.errors[0];
-    const errorMessage = extractErrorMessage(error);
-    const { expected, actual } = extractExpectedActual(error.stack);
-    const failureType = determineFailureType(errorMessage, test.projectName);
-    const { severity, priority } = classifySeverity(failureType, errorMessage);
+                const failure: FailureData = {
+                  testName: spec.title,
+                  status: res.status,
+                  project: test.projectName,
+                  error: errorMessage,
+                  expected: expected || undefined,
+                  actual: actual || undefined,
+                  failureType,
+                  branch,
+                  commit,
+                  severity,
+                  priority: priority as 'Critical' | 'High' | 'Medium' | 'Low',
+                  timestamp: new Date().toISOString(),
+                  stepsToReproduce: [
+                    `Run: npx playwright test --project=${test.projectName}`,
+                    `Filter: "${spec.title}"`,
+                    `Review trace: playwright-report/index.html`,
+                  ],
+                };
 
-    const failure: FailureData = {
-      testName: test.title,
-      status: test.outcome,
-      project: test.projectName,
-      error: errorMessage,
-      expected: expected || (test.expected as string | undefined),
-      actual: actual || (test.actual as string | undefined),
-      failureType,
-      branch,
-      commit,
-      severity,
-      priority: priority as 'Critical' | 'High' | 'Medium' | 'Low',
-      timestamp: new Date().toISOString(),
-      stepsToReproduce: [
-        `Run: npx playwright test --project=${test.projectName}`,
-        `Filter: "${test.title}"`,
-        `Review trace: playwright-report/index.html`,
-      ],
-    };
+                if (res.attachments) {
+                  for (const attachment of res.attachments) {
+                    if (attachment.name === 'trace') failure.trace = attachment.path || attachment.name;
+                    if (attachment.name === 'screenshot') failure.screenshot = attachment.path || attachment.name;
+                    if (attachment.name === 'video') failure.video = attachment.path || attachment.name;
+                  }
+                }
 
-    if (test.attachments) {
-      for (const attachment of test.attachments) {
-        if (attachment.name === 'trace') failure.trace = attachment.path || attachment.name;
-        if (attachment.name === 'screenshot') failure.screenshot = attachment.path || attachment.name;
-        if (attachment.name === 'video') failure.video = attachment.path || attachment.name;
+                failures.push(failure);
+              }
+            }
+          }
+        }
       }
+      if (suite.suites) collectFailed(suite.suites);
     }
-
-    failures.push(failure);
   }
+
+  collectFailed(result.suites);
 
   return failures;
 }
