@@ -32,10 +32,21 @@ interface BugAnalysis {
   priority: string;
   classification: 'PRODUCT_BUG' | 'TEST_BUG' | 'FLAKY_TEST' | 'ENVIRONMENT_FAILURE' | 'DATA_FAILURE' | 'UNKNOWN';
   confidence: number;
+  relevantEvidence?: string[];
+  error?: string;
 }
+
+type AnalysisEntry = {
+  failure: FailureData;
+  analysis: BugAnalysis;
+};
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
+
+const MODEL_FALLBACKS = ['gpt-5.6-luna', 'gpt-4o', 'gpt-4o-mini'];
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
 
 function loadFailureData(): FailureData[] {
   const path = join(rootDir, 'failure-data.json');
@@ -50,6 +61,7 @@ function loadTestFile(testName: string): string {
   const possiblePaths = [
     join(rootDir, 'e2e', 'tests', 'browser.spec.ts'),
     join(rootDir, 'e2e', 'tests', 'api.spec.ts'),
+    join(rootDir, 'e2e', 'tests', 'usability.spec.ts'),
   ];
 
   for (const path of possiblePaths) {
@@ -84,59 +96,16 @@ function loadSelectors(): string {
   return '';
 }
 
-async function analyseWithOpenAI(failure: FailureData): Promise<BugAnalysis> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    console.error('OPENAI_API_KEY environment variable is not set.');
-    process.exit(1);
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
+function buildEvidence(failure: FailureData): string {
   const testCode = loadTestFile(failure.testName);
   const pageObjects = loadPageObjects();
   const selectors = loadSelectors();
 
-  const prompt = `You are an AI QA Defect Analysis Agent.
-
-Analyse the supplied Playwright test failure.
-
-Your job is to convert the failure evidence into a structured software defect.
-
-Use ONLY the evidence provided.
-Do not invent:
-- application behaviour
-- reproduction steps
-- expected results
-- API responses
-- environment information
-
-The bug title must describe the actual failure.
-Do not use generic titles such as:
-"Playwright test failed"
-"Automated test failure"
-"Test failed"
-
-The title should describe the affected functionality and observed failure.
-
-Reproduction steps must be based on the actual Playwright test actions.
-
-Return valid JSON only.
-
-Required structure:
-{
-  "title": "",
-  "summary": "",
-  "stepsToReproduce": [],
-  "expectedResult": "",
-  "actualResult": "",
-  "failureType": "",
-  "severity": "",
-  "priority": "",
-  "classification": "PRODUCT_BUG|TEST_BUG|FLAKY_TEST|ENVIRONMENT_FAILURE|DATA_FAILURE|UNKNOWN",
-  "confidence": 0.0-1.0,
-  "relevantEvidence": []
-}`;
-
-  const evidence = `--- FAILURE EVIDENCE ---
+  return `--- FAILURE EVIDENCE ---
 
 Test Name: ${failure.testName}
 Status: ${failure.status}
@@ -164,7 +133,129 @@ ${pageObjects || 'Not found'}
 ${selectors || 'Not found'}
 
 --- END EVIDENCE ---`;
+}
 
+const BUG_ANALYSIS_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    title: { type: 'string', description: 'Specific title describing the affected functionality and observed failure' },
+    summary: { type: 'string', description: 'Brief summary of the defect' },
+    stepsToReproduce: { type: 'array', items: { type: 'string' }, description: 'Reproduction steps based on actual Playwright test actions' },
+    expectedResult: { type: 'string', description: 'What the test expected to happen' },
+    actualResult: { type: 'string', description: 'What actually happened (the failure)' },
+    failureType: { type: 'string', enum: ['UI', 'API', 'Data', 'Environment', 'Unknown'], description: 'Classification of failure by type' },
+    severity: { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'], description: 'Severity of the failure' },
+    priority: { type: 'string', enum: ['P1', 'P2', 'P3', 'P4'], description: 'Priority of the fix' },
+    classification: { type: 'string', enum: ['PRODUCT_BUG', 'TEST_BUG', 'FLAKY_TEST', 'ENVIRONMENT_FAILURE', 'DATA_FAILURE', 'UNKNOWN'], description: 'Whether this is a product bug or test issue' },
+    confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Confidence level 0.0-1.0' },
+    relevantEvidence: { type: 'array', items: { type: 'string' }, description: 'Relevant evidence references', default: [] },
+  },
+  required: ['title', 'summary', 'stepsToReproduce', 'expectedResult', 'actualResult', 'failureType', 'severity', 'priority', 'classification', 'confidence'],
+  additionalProperties: false,
+} as const;
+
+const SYSTEM_PROMPT = `You are an AI QA Defect Analysis Agent.
+
+Analyse the supplied Playwright test failure and convert the failure evidence into a structured software defect.
+
+Use ONLY the evidence provided. Do not invent application behaviour, reproduction steps, expected results, API responses, or environment information that is not present in the evidence.
+
+The bug title must describe the actual failure — not generic titles like "Playwright test failed" or "Automated test failure".
+
+Reproduction steps must be based on the actual Playwright test actions.
+
+Return valid JSON matching the provided schema.`;
+
+async function callOpenAI(
+  apiKey: string,
+  model: string,
+  prompt: string,
+  evidence: string
+): Promise<BugAnalysis> {
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: evidence },
+      ],
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'bug_analysis',
+          schema: BUG_ANALYSIS_SCHEMA,
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => 'unknown');
+    let errorDetail = errorBody;
+
+    try {
+      const parsed = JSON.parse(errorBody);
+      errorDetail = parsed.error?.message || errorBody;
+    } catch {
+      // use raw error body
+    }
+
+    throw new Error(`OpenAI API error (${response.status}): ${errorDetail}`);
+  }
+
+  const body = await response.json() as {
+    output?: Array<{
+      type?: string;
+      content?: Array<{ type?: string; text?: string }>;
+    }>;
+    error?: { message: string };
+  };
+
+  if (body.error) {
+    throw new Error(`OpenAI API error: ${body.error.message}`);
+  }
+
+  let jsonText = '';
+
+  for (const output of body.output || []) {
+    if (output.type === 'message' || output.type === 'function_call') {
+      for (const content of output.content || []) {
+        if (content.type === 'output_text' && content.text) {
+          jsonText = content.text;
+        }
+      }
+    }
+  }
+
+  if (!jsonText) {
+    throw new Error('OpenAI Responses API returned no output text');
+  }
+
+  try {
+    return JSON.parse(jsonText) as BugAnalysis;
+  } catch {
+    const cleaned = jsonText.trim();
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      const extracted = cleaned.substring(firstBrace, lastBrace + 1);
+      return JSON.parse(extracted) as BugAnalysis;
+    }
+    throw new Error(`Failed to parse OpenAI response as JSON: ${jsonText.substring(0, 200)}`);
+  }
+}
+
+async function callOpenAIFallback(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  evidence: string
+): Promise<BugAnalysis> {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -172,54 +263,175 @@ ${selectors || 'Not found'}
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o',
+      model,
       temperature: 0.1,
       response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: prompt },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: evidence },
       ],
     }),
   });
 
   if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`OpenAI API error: ${response.status} ${errorBody}`);
+    const errorBody = await response.text().catch(() => 'unknown');
+    let errorDetail = errorBody;
+
+    try {
+      const parsed = JSON.parse(errorBody);
+      errorDetail = parsed.error?.message || errorBody;
+    } catch {
+      // use raw error body
+    }
+
+    throw new Error(`OpenAI API error (${response.status}): ${errorDetail}`);
   }
 
-  const body = await response.json() as { choices: Array<{ message: { content: string } }> };
+  const body = await response.json() as {
+    choices: Array<{ message: { content: string } }>;
+    error?: { message: string };
+  };
+
+  if (body.error) {
+    throw new Error(`OpenAI API error: ${body.error.message}`);
+  }
+
   const aiResponse = body.choices[0]?.message?.content || '{}';
 
   try {
-    const parsed: BugAnalysis = JSON.parse(aiResponse);
-    return parsed;
-  } catch (parseError) {
-    console.error('Failed to parse OpenAI response as JSON:', aiResponse);
-    throw new Error('OpenAI returned invalid JSON');
+    return JSON.parse(aiResponse) as BugAnalysis;
+  } catch {
+    const cleaned = aiResponse.trim();
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      const extracted = cleaned.substring(firstBrace, lastBrace + 1);
+      return JSON.parse(extracted) as BugAnalysis;
+    }
+    throw new Error(`Failed to parse OpenAI response as JSON: ${aiResponse.substring(0, 200)}`);
   }
+}
+
+function createEvidenceOnlyFallback(failure: FailureData, aiError?: string): BugAnalysis {
+  const title = `${failure.testName} — ${failure.project} project`;
+
+  return {
+    title,
+    summary: `Test failed with error: ${failure.error.split('\n')[0] || failure.error}`,
+    stepsToReproduce: failure.stepsToReproduce || [`Run: npx playwright test --project=${failure.project}`, `Filter: "${failure.testName}"`],
+    expectedResult: failure.expected || 'Not specified in failure data',
+    actualResult: failure.actual || failure.error,
+    failureType: failure.failureType,
+    severity: failure.severity,
+    priority: failure.priority,
+    classification: 'UNKNOWN',
+    confidence: 0.1,
+    relevantEvidence: [],
+    error: aiError ? `AI analysis failed: ${aiError}. Fallback based on evidence only.` : 'Evidence-only fallback (AI analysis unavailable)',
+  };
+}
+
+async function analyseWithRetry(
+  failure: FailureData,
+  apiKey: string,
+  model: string
+): Promise<BugAnalysis> {
+  const evidence = buildEvidence(failure);
+  const modelsToTry = [model, ...MODEL_FALLBACKS.filter(m => m !== model)];
+  const primaryModel = model;
+
+  let lastError: string | undefined;
+
+  for (const tryModel of modelsToTry) {
+    const isFallbackModel = tryModel !== primaryModel;
+    if (isFallbackModel) {
+      console.log(`    Retrying with model: ${tryModel}`);
+    }
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 1 && !isFallbackModel) {
+          console.log(`    Retry ${attempt}/${MAX_RETRIES}...`);
+          await sleep(RETRY_DELAY_MS * attempt);
+        }
+
+        const analysis = await callOpenAI(apiKey, tryModel, SYSTEM_PROMPT, evidence);
+        return analysis;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        console.warn(`    Attempt ${attempt} with ${tryModel} failed: ${lastError}`);
+
+        if (attempt < MAX_RETRIES && !isFallbackModel) {
+          await sleep(RETRY_DELAY_MS * attempt);
+        }
+      }
+    }
+  }
+
+  console.error(`  → All AI analysis attempts failed. Using evidence-only fallback.`);
+  console.error(`  → Last error: ${lastError}`);
+  return createEvidenceOnlyFallback(failure, lastError);
+}
+
+function validateBugAnalysis(analysis: BugAnalysis): BugAnalysis {
+  return {
+    title: analysis.title || 'Untitled Bug',
+    summary: analysis.summary || '',
+    stepsToReproduce: analysis.stepsToReproduce || [],
+    expectedResult: analysis.expectedResult || '',
+    actualResult: analysis.actualResult || '',
+    failureType: analysis.failureType || 'Unknown',
+    severity: analysis.severity || 'Medium',
+    priority: analysis.priority || 'P3',
+    classification: analysis.classification || 'UNKNOWN',
+    confidence: typeof analysis.confidence === 'number' ? analysis.confidence : 0,
+    relevantEvidence: analysis.relevantEvidence || [],
+    error: analysis.error,
+  };
 }
 
 async function main() {
   console.log('Analysing failures with OpenAI...');
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    console.error('OPENAI_API_KEY environment variable is not set.');
+    process.exit(1);
+  }
+
+  const model = process.env.OPENAI_MODEL || 'gpt-5.6-luna';
+
   const failures = loadFailureData();
 
   if (failures.length === 0) {
     console.log('No failures to analyse.');
-    return;
   }
 
-  const analyses: Array<{ failure: FailureData; analysis: BugAnalysis }> = [];
+  console.log(`Failures available for AI analysis: ${failures.length}`);
+
+  const analyses: AnalysisEntry[] = [];
 
   for (const failure of failures) {
-    console.log(`Analysing: ${failure.testName}`);
+    console.log(`\n  Analysing: ${failure.testName}`);
+
     try {
-      const analysis = await analyseWithOpenAI(failure);
-      analyses.push({ failure, analysis });
-      console.log(`  → Title: ${analysis.title}`);
-      console.log(`  → Classification: ${analysis.classification}`);
-      console.log(`  → Confidence: ${analysis.confidence}`);
+      const analysis = await analyseWithRetry(failure, apiKey, model);
+      const validated = validateBugAnalysis(analysis);
+      analyses.push({ failure, analysis: validated });
+
+      console.log(`  → Title: ${validated.title}`);
+      console.log(`  → Classification: ${validated.classification}`);
+      console.log(`  → Confidence: ${validated.confidence}`);
+
+      if (validated.error) {
+        console.log(`  → Warning: ${validated.error}`);
+      }
     } catch (error) {
-      console.error(`  → Failed: ${error instanceof Error ? error.message : error}`);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  → Unexpected error: ${message}`);
+
+      const fallback = createEvidenceOnlyFallback(failure, message);
+      analyses.push({ failure, analysis: fallback });
     }
   }
 
@@ -230,6 +442,7 @@ async function main() {
   }
 
   writeFileSync(outputPath, JSON.stringify(analyses, null, 2));
+  console.log(`\nAI analyses: ${analyses.length}`);
   console.log(`Analysis written to: ${outputPath}`);
 }
 

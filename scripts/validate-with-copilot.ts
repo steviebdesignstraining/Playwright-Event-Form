@@ -154,10 +154,7 @@ async function main() {
   console.log('Validating bug analyses with Copilot...');
   const entries = loadBugAnalysis();
 
-  if (entries.length === 0) {
-    console.log('No analyses to validate.');
-    return;
-  }
+  console.log(`Analyses to validate: ${entries.length}`);
 
   const results: Array<{ failure: unknown; analysis: BugAnalysis; validation: ValidationResult }> = [];
 
@@ -192,7 +189,7 @@ async function main() {
   }));
 
   writeFileSync(validatedPath, JSON.stringify(outputData, null, 2));
-  console.log(`Validation results written to: ${validatedPath}`);
+  console.log(`Validated bugs written to: ${validatedPath}`);
 }
 
 main();
