@@ -83,7 +83,7 @@ jobs:
         run: |
           echo "Checking Playwright results..."
 
-          if [ ! -f "playwright-report/results.json" ]; then
+          if [ ! -f "test-results/results.json" ]; then
             echo "No Playwright results.json found."
             echo "has_failure=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -92,7 +92,7 @@ jobs:
           FAILED=$(node <<'NODE'
           const fs = require('fs');
 
-          const file = 'playwright-report/results.json';
+          const file = 'test-results/results.json';
           const result = JSON.parse(fs.readFileSync(file, 'utf8'));
 
           let failures = [];

@@ -170,7 +170,7 @@ function normaliseAttachmentPath(path?: string): string | undefined {
 }
 
 function generateFailureData(): FailureData[] {
-  const jsonResultPath = join(rootDir, 'playwright-report', 'results.json');
+  const jsonResultPath = join(rootDir, 'test-results', 'results.json');
 
   if (!existsSync(jsonResultPath)) {
     console.error('No Playwright JSON results found at:', jsonResultPath);
