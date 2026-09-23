@@ -5,12 +5,35 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
+interface ValidationInfo {
+  valid: boolean;
+  issues: string[];
+  classification: string;
+  skipped: boolean;
+  status: 'VALID' | 'INVALID' | 'SKIPPED' | 'ERROR';
+  error?: string;
+}
+
 interface ValidatedBug {
-  title?: string;
-  test?: string;
-  classification?: string;
-  analysis?: { classification?: string; title?: string };
-  validation?: { classification?: string };
+  title: string;
+  summary: string;
+  stepsToReproduce: string[];
+  expectedResult: string;
+  actualResult: string;
+  failureType: string;
+  severity: string;
+  priority: string;
+  classification: string;
+  confidence: number;
+  relevantEvidence: string[];
+  aiAnalysisSucceeded: boolean;
+  fallbackUsed: boolean;
+  aiError?: string;
+  error?: string;
+  branch?: string;
+  commit?: string;
+  project?: string;
+  validation: ValidationInfo;
 }
 
 function loadValidatedBugs(): ValidatedBug[] {
@@ -19,32 +42,48 @@ function loadValidatedBugs(): ValidatedBug[] {
   return Array.isArray(data) ? data : [data];
 }
 
-function getClassification(item: ValidatedBug): string {
-  return (
-    item.classification ??
-    item.analysis?.classification ??
-    item.validation?.classification ??
-    'UNKNOWN'
-  );
-}
-
 function main() {
   const records = loadValidatedBugs();
 
   const bugs: ValidatedBug[] = [];
   const unknown: ValidatedBug[] = [];
   const nonBugs: ValidatedBug[] = [];
+  const validationErrors: ValidatedBug[] = [];
+  const aiFallback: ValidatedBug[] = [];
 
   for (const item of records) {
-    const classification = getClassification(item);
-    const title = item.title ?? item.test ?? item.analysis?.title ?? 'Unknown test';
+    const classification = item.classification || 'UNKNOWN';
+    const validationStatus = item.validation?.status || 'ERROR';
+    const fallbackUsed = item.fallbackUsed ?? false;
+    const aiSucceeded = item.aiAnalysisSucceeded ?? false;
+
+    if (!aiSucceeded || fallbackUsed) {
+      aiFallback.push(item);
+      continue;
+    }
+
+    if (validationStatus === 'ERROR') {
+      validationErrors.push(item);
+      continue;
+    }
+
+    if (validationStatus === 'SKIPPED') {
+      validationErrors.push(item);
+      continue;
+    }
 
     if (classification === 'PRODUCT_BUG') {
-      bugs.push(item);
+      if (validationStatus === 'VALID' && item.validation?.valid) {
+        bugs.push(item);
+      } else if (validationStatus === 'INVALID') {
+        nonBugs.push(item);
+      } else {
+        unknown.push(item);
+      }
     } else if (classification === 'UNKNOWN') {
-      unknown.push({ ...item, classification });
+      unknown.push(item);
     } else {
-      nonBugs.push({ ...item, classification });
+      nonBugs.push(item);
     }
   }
 
@@ -53,36 +92,54 @@ function main() {
   console.log('Validated Bug Summary');
   console.log('========================================');
   console.log(`Total records: ${records.length}`);
-  console.log(`Product bugs: ${bugs.length}`);
-  console.log(`Unknown: ${unknown.length}`);
-  console.log(`Non-bugs: ${nonBugs.length}`);
+  console.log(`Product bugs (AI + validated): ${bugs.length}`);
+  console.log(`AI fallback/unavailable: ${aiFallback.length}`);
+  console.log(`Validation errors/skipped: ${validationErrors.length}`);
+  console.log(`Unknown classification: ${unknown.length}`);
+  console.log(`Non-bugs (TEST_DEFECT/etc): ${nonBugs.length}`);
   console.log('========================================');
 
   for (const bug of bugs) {
-    const title = bug.title ?? bug.test ?? bug.analysis?.title ?? 'Unknown test';
-    console.log(`BUG: ${title}`);
-    console.log('Classification: PRODUCT_BUG');
+    console.log(`BUG: ${bug.title}`);
+    console.log(`  Classification: PRODUCT_BUG`);
+    console.log(`  Confidence: ${(bug.confidence * 100).toFixed(0)}%`);
+    console.log(`  Validation: ${bug.validation?.status}`);
+  }
+
+  console.log('========================================');
+
+  if (aiFallback.length > 0) {
+    console.error('');
+    console.error(`ERROR: ${aiFallback.length} records used AI fallback (AI analysis was unavailable).`);
+    for (const item of aiFallback) {
+      console.error(`  FALLBACK: ${item.title} — ${item.aiError ?? 'AI unavailable'}`);
+    }
+    console.error('');
+    console.error('AI analysis must succeed for issues to be created. Fix OPENAI_API_KEY / credits and re-run.');
+    process.exit(1);
+  }
+
+  if (validationErrors.length > 0) {
+    console.error('');
+    console.error(`ERROR: ${validationErrors.length} records could not be validated (Copilot validation unavailable).`);
+    for (const item of validationErrors) {
+      console.error(`  UNVALIDATED: ${item.title} — ${item.validation?.error ?? 'Validation skipped'}`);
+    }
+    console.error('');
+    console.error('Copilot validation must succeed for issues to be created. Check COPILOT_GITHUB_TOKEN and endpoint.');
+    process.exit(1);
   }
 
   if (unknown.length > 0) {
     console.error('');
-    console.error('ERROR: Some validation records have no classification.');
+    console.error(`ERROR: ${unknown.length} validation records have UNKNOWN classification.`);
     for (const item of unknown) {
-      const title = item.title ?? item.test ?? item.analysis?.title ?? 'Unknown test';
-      console.error(`UNKNOWN: ${title}`);
+      console.error(`  UNKNOWN: ${item.title}`);
     }
     console.error('');
     console.error('Check validate-with-copilot.ts and validated-bug.json schema.');
-    console.error('');
-
-    if (process.env.GITHUB_OUTPUT) {
-      appendFileSync(process.env.GITHUB_OUTPUT, 'issues_created=false\n');
-    }
-
     process.exit(1);
   }
-
-  console.log('========================================');
 
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(

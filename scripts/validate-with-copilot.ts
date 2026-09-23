@@ -28,6 +28,8 @@ interface ValidationResult {
   valid: boolean;
   issues: string[];
   correctedBug: BugAnalysis | null;
+  validationStatus: 'VALID' | 'INVALID' | 'SKIPPED' | 'ERROR';
+  validationError?: string;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -68,12 +70,24 @@ async function validateWithCopilot(analysis: BugAnalysis, testCode: string, repo
   const token = process.env.COPILOT_GITHUB_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) {
     console.warn('No Copilot token available. Skipping Copilot validation.');
-    return { valid: false, issues: ['No Copilot token available — validation skipped'], correctedBug: null };
+    return {
+      valid: false,
+      issues: ['No Copilot token available — validation skipped'],
+      correctedBug: null,
+      validationStatus: 'SKIPPED',
+      validationError: 'No Copilot token available',
+    };
   }
 
   if (!repo) {
     console.warn('Could not determine GitHub repository. Skipping Copilot validation.');
-    return { valid: false, issues: ['Could not determine repository — validation skipped'], correctedBug: null };
+    return {
+      valid: false,
+      issues: ['Could not determine repository — validation skipped'],
+      correctedBug: null,
+      validationStatus: 'SKIPPED',
+      validationError: 'Could not determine GitHub repository',
+    };
   }
 
   const prompt = `Review the generated QA bug report against the Playwright repository.
@@ -132,14 +146,30 @@ Return valid JSON only with this structure:
 
     if (!response.ok) {
       console.warn(`Copilot validation API returned ${response.status}. Using unvalidated result.`);
-      return { valid: false, issues: [`Copilot API error ${response.status}`], correctedBug: null };
+      return {
+        valid: false,
+        issues: [`Copilot API error ${response.status}`],
+        correctedBug: null,
+        validationStatus: 'ERROR',
+        validationError: `HTTP ${response.status} from Copilot API`,
+      };
     }
 
     const body = await response.json() as ValidationResult;
-    return body;
+    return {
+      ...body,
+      validationStatus: body.valid ? 'VALID' : 'INVALID',
+    };
   } catch (error) {
-    console.warn(`Copilot validation failed: ${error instanceof Error ? error.message : error}. Using unvalidated result.`);
-    return { valid: false, issues: [`Copilot validation exception: ${error instanceof Error ? error.message : error}`], correctedBug: null };
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.warn(`Copilot validation failed: ${errorMsg}. Using unvalidated result.`);
+    return {
+      valid: false,
+      issues: [`Copilot validation exception: ${errorMsg}`],
+      correctedBug: null,
+      validationStatus: 'ERROR',
+      validationError: errorMsg,
+    };
   }
 }
 
@@ -184,8 +214,12 @@ async function main() {
     const validation = await validateWithCopilot(analysis, testCode, repo);
 
     console.log(`  → Valid: ${validation.valid}`);
+    console.log(`  → Status: ${validation.validationStatus}`);
     if (validation.issues.length > 0) {
       console.log(`  → Issues: ${validation.issues.join(', ')}`);
+    }
+    if (validation.validationError) {
+      console.log(`  → Error: ${validation.validationError}`);
     }
 
     results.push({ failure, analysis, validation });
@@ -203,7 +237,8 @@ async function main() {
     const finalConfidence = typeof base.confidence === 'number' ? base.confidence : (analysis.confidence ?? 0);
     const finalError = base.error ?? analysis.error;
 
-    const validationSkipped = !validation.valid && validation.issues.some(i => i.includes('skipped')) && !validation.correctedBug;
+    const validationSkipped = validation.validationStatus === 'SKIPPED';
+    const validationErrored = validation.validationStatus === 'ERROR';
 
     return {
       title: base.title || analysis.title,
@@ -229,6 +264,8 @@ async function main() {
         issues: validation.issues,
         classification: finalClassification,
         skipped: validationSkipped,
+        status: validation.validationStatus,
+        error: validation.validationError,
         correctedBug: validation.correctedBug,
       },
     };

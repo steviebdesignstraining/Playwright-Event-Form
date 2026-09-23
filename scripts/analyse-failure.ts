@@ -344,7 +344,7 @@ function createEvidenceOnlyFallback(failure: FailureData, aiError?: string): Bug
     relevantEvidence: [],
     aiAnalysisSucceeded: false,
     fallbackUsed: true,
-     aiError: aiError ? `AI analysis failed: ${aiError}` : 'Evidence-only fallback (AI analysis unavailable)',
+    aiError: aiError ? `AI analysis failed: ${aiError}` : 'Evidence-only fallback (AI analysis unavailable)',
     error: aiError ? `AI analysis failed: ${aiError}. Fallback based on evidence only.` : 'Evidence-only fallback (AI analysis unavailable)',
     branch: failure.branch,
     commit: failure.commit,
@@ -362,8 +362,14 @@ async function analyseWithRetry(
   const primaryModel = model;
 
   let lastError: string | undefined;
+  let hitRateLimit = false;
 
   for (const tryModel of modelsToTry) {
+    if (hitRateLimit) {
+      console.warn(`  → Skipping model ${tryModel} due to earlier 429 rate limit.`);
+      break;
+    }
+
     const isFallbackModel = tryModel !== primaryModel;
     if (isFallbackModel) {
       console.log(`    Retrying with model: ${tryModel}`);
@@ -382,11 +388,25 @@ async function analyseWithRetry(
         lastError = error instanceof Error ? error.message : String(error);
         console.warn(`    Attempt ${attempt} with ${tryModel} failed: ${lastError}`);
 
+        if (lastError.includes('429') || lastError.includes('no credits') || lastError.includes('insufficient')) {
+          console.error('  → OpenAI API returned 429 (rate limit / no credits). Stopping retries.');
+          hitRateLimit = true;
+          break;
+        }
+
         if (attempt < MAX_RETRIES && !isFallbackModel) {
           await sleep(RETRY_DELAY_MS * attempt);
         }
       }
+
+      if (hitRateLimit) break;
     }
+
+    if (hitRateLimit) break;
+  }
+
+  if (hitRateLimit) {
+    lastError = `OpenAI API error: 429 — rate limit or no credits remaining. ${lastError || ''}`;
   }
 
   console.error(`  → All AI analysis attempts failed. Using evidence-only fallback.`);

@@ -311,20 +311,7 @@ jobs:
 
       - name: Verify analysis output
         id: analysis-status
-        run: |
-          if [ ! -f "bug-analysis.json" ]; then
-            echo "ERROR: bug-analysis.json was not generated."
-            exit 1
-          fi
-
-          if [ ! -f "validated-bug.json" ]; then
-            echo "ERROR: validated-bug.json was not generated."
-            exit 1
-          fi
-
-          echo "complete=true" >> "$GITHUB_OUTPUT"
-
-          echo "AI analysis completed successfully."
+        run: npx tsx scripts/verify-analysis-health.ts
 
       - name: Upload AI analysis
         uses: actions/upload-artifact@v4
