@@ -182,6 +182,7 @@ async function main() {
 
   const outputData = results.map(({ analysis, validation }) => {
     const base = validation.correctedBug ?? analysis;
+    const finalClassification = (base.classification || analysis.classification || 'UNKNOWN') as string;
     return {
       title: base.title || analysis.title,
       summary: base.summary || '',
@@ -191,13 +192,15 @@ async function main() {
       failureType: base.failureType || 'Unknown',
       severity: base.severity || 'Medium',
       priority: base.priority || 'P3',
-      classification: base.classification || 'UNKNOWN',
+      classification: finalClassification,
       confidence: typeof base.confidence === 'number' ? base.confidence : 0,
       relevantEvidence: base.relevantEvidence || [],
       error: base.error ?? analysis.error,
       validation: {
         valid: validation.valid,
         issues: validation.issues,
+        classification: finalClassification,
+        correctedBug: validation.correctedBug,
       },
     };
   });

@@ -381,53 +381,13 @@ jobs:
           name: ai-analysis
           path: .
 
+      - name: Inspect validated bug schema
+        if: always()
+        run: npx tsx scripts/inspect-validated-bugs.ts
+
       - name: Check validated bugs
         id: check-bugs
-        shell: bash
-        run: |
-          if [ ! -f "validated-bug.json" ]; then
-            echo "ERROR: validated-bug.json not found."
-            exit 1
-          fi
-
-           node <<'NODE'
-           const fs = require('fs');
-
-           const data = JSON.parse(
-             fs.readFileSync('validated-bug.json', 'utf8')
-           );
-
-           const records = Array.isArray(data) ? data : [data];
-
-           const VALID_CLASSIFICATIONS = ['PRODUCT_BUG'];
-
-           const bugs = records.filter(item => {
-             const classification = item.classification || 'UNKNOWN';
-             return VALID_CLASSIFICATIONS.includes(classification);
-           });
-
-           const skipped = records.length - bugs.length;
-
-           console.log('========================================');
-           console.log('Validated Bug Summary');
-           console.log('========================================');
-           console.log(`Total records: ${records.length}`);
-           console.log(`Bug candidates: ${bugs.length}`);
-           console.log(`Skipped (UNKNOWN/TEST_DEFECT/TEST_INFRASTRUCTURE): ${skipped}`);
-
-           for (const bug of bugs) {
-             const classification = bug.classification || 'UNKNOWN';
-             console.log(`BUG: ${bug.title}`);
-             console.log(`Classification: ${classification}`);
-           }
-
-           console.log('========================================');
-
-           fs.appendFileSync(
-             process.env.GITHUB_OUTPUT,
-             `issues_created=${bugs.length > 0 ? 'true' : 'false'}\n`
-           );
-           NODE
+        run: npx tsx scripts/check-validated-bugs.ts
 
       - name: Create GitHub Issues
         if: steps.check-bugs.outputs.issues_created == 'true'
