@@ -149,6 +149,26 @@ function extractExpectedActual(errorStack: string | undefined): { expected?: str
   return result;
 }
 
+function normaliseAttachmentPath(path?: string): string | undefined {
+  if (!path) return undefined;
+
+  const markers = [
+    'test-results/',
+    'playwright-report/',
+    'allure-results/',
+  ];
+
+  for (const marker of markers) {
+    const index = path.indexOf(marker);
+
+    if (index !== -1) {
+      return path.substring(index);
+    }
+  }
+
+  return path;
+}
+
 function generateFailureData(): FailureData[] {
   const jsonResultPath = join(rootDir, 'playwright-report', 'results.json');
 
@@ -198,9 +218,21 @@ function generateFailureData(): FailureData[] {
 
                 if (res.attachments) {
                   for (const attachment of res.attachments) {
-                    if (attachment.name === 'trace') failure.trace = attachment.path || attachment.name;
-                    if (attachment.name === 'screenshot') failure.screenshot = attachment.path || attachment.name;
-                    if (attachment.name === 'video') failure.video = attachment.path || attachment.name;
+                    if (attachment.name === 'trace') {
+                      failure.trace = normaliseAttachmentPath(
+                        attachment.path || attachment.name
+                      );
+                    }
+                    if (attachment.name === 'screenshot') {
+                      failure.screenshot = normaliseAttachmentPath(
+                        attachment.path || attachment.name
+                      );
+                    }
+                    if (attachment.name === 'video') {
+                      failure.video = normaliseAttachmentPath(
+                        attachment.path || attachment.name
+                      );
+                    }
                   }
                 }
 

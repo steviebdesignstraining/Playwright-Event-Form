@@ -28,6 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
+    outputs:
+      has_failure: ${{ steps.check-failure.outputs.has_failure }}
+
     steps:
 
       - name: Checkout
@@ -51,15 +54,15 @@ jobs:
           rm -rf allure-report
           rm -rf playwright-report
           rm -rf test-results
-          rm -rf failure-data.json
-          rm -rf bug-analysis.json
-          rm -rf validated-bug.json
-          rm -rf created-issues.json
+          rm -f failure-data.json
+          rm -f bug-analysis.json
+          rm -f validated-bug.json
+          rm -f created-issues.json
 
       - name: Run Playwright tests
         env:
           DOTENVX_KEY: ${{ secrets.DOTENVX_KEY }}
-        run: npm run test -- --workers=4 --retries=1 --reporter=json
+        run: npm run test -- --workers=4 --retries=1
         continue-on-error: true
         id: test-run
 
@@ -67,16 +70,61 @@ jobs:
         id: check-failure
         if: always()
         run: |
-          if [ -f "playwright-report/results.json" ]; then
-            FAILED=$(node -e "const r=require('./playwright-report/results.json'); console.log(r.tests.filter(t=>t.outcome==='failed').length>0?'true':'false')")
-            echo "has_failure=$FAILED" >> $GITHUB_OUTPUT
-          else
-            echo "has_failure=false" >> $GITHUB_OUTPUT
+          if [ ! -f "playwright-report/results.json" ]; then
+            echo "has_failure=false" >> "$GITHUB_OUTPUT"
+            echo "No Playwright results.json found."
+            exit 0
           fi
+
+          FAILED=$(node - <<'NODE'
+          const fs = require('fs');
+
+          const result = JSON.parse(
+            fs.readFileSync('playwright-report/results.json', 'utf8')
+          );
+
+          function hasFailedTests(suites = []) {
+            for (const suite of suites) {
+              for (const spec of suite.specs || []) {
+                for (const test of spec.tests || []) {
+                  if ((test.results || []).some(r => r.status === 'failed')) {
+                    return true;
+                  }
+                }
+              }
+
+              if (hasFailedTests(suite.suites || [])) {
+                return true;
+              }
+            }
+
+            return false;
+          }
+
+          console.log(
+            hasFailedTests(result.suites || [])
+              ? 'true'
+              : 'false'
+          );
+          NODE
+          )
+
+          echo "has_failure=$FAILED" >> "$GITHUB_OUTPUT"
+          echo "Playwright failures detected: $FAILED"
 
       - name: Generate failure data
         if: steps.check-failure.outputs.has_failure == 'true'
-        run: npx tsx scripts/generate-failure-data.ts
+        run: npm run generate:failure-data
+
+      - name: Verify generated failure data
+        if: always()
+        run: |
+          if [ -f "failure-data.json" ]; then
+            echo "failure-data.json generated successfully."
+            cat failure-data.json
+          else
+            echo "No failure-data.json generated."
+          fi
 
       - name: Upload Playwright evidence
         if: always()
@@ -94,7 +142,7 @@ jobs:
   analyse-failure:
     name: AI Failure Analysis
     needs: run-tests
-    if: needs.run-tests.outputs.has_failure == 'true' || always()
+    if: needs.run-tests.outputs.has_failure == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -119,13 +167,16 @@ jobs:
           path: .
 
       - name: Verify failure data
+        id: verify-failure-data
         run: |
           if [ ! -f "failure-data.json" ]; then
-            echo "No failure-data.json found. Skipping AI analysis."
-            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No failure-data.json found."
             exit 0
           fi
-          echo "skip=false" >> $GITHUB_OUTPUT
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "failure-data.json found."
 
       - name: Run OpenAI analysis
         if: steps.verify-failure-data.outputs.skip != 'true'
@@ -151,7 +202,9 @@ jobs:
   create-issue:
     name: Create GitHub Issue
     needs: [run-tests, analyse-failure]
-    if: always() && needs.run-tests.result == 'success'
+    if: |
+      needs.run-tests.result == 'success' &&
+      needs.analyse-failure.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
