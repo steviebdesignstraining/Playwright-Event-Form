@@ -17,6 +17,7 @@ interface BugMetadata {
   priority: string;
   classification: string;
   confidence: number;
+  project?: string;
 }
 
 interface IssueWithMetadata {
@@ -34,11 +35,23 @@ interface ProjectField {
 
 interface ProjectInfo {
   id: string;
+  title: string;
   fields: ProjectField[];
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
+
+function getBrowserFromProject(project: string): string {
+  const p = project.toLowerCase();
+  if (p === 'chromium') return 'Chromium';
+  if (p === 'firefox') return 'Firefox';
+  if (p === 'webkit') return 'WebKit';
+  if (p === 'api') return 'API';
+  if (p.includes('chrome')) return 'Chrome';
+  if (p.includes('edge')) return 'Edge';
+  return 'Unknown';
+}
 
 function getRepoInfo(): { owner: string; repo: string } {
   const ghRepo = process.env.GITHUB_REPOSITORY;
@@ -398,7 +411,7 @@ async function main() {
       { field: 'Priority', value: bug.priority },
       { field: 'Failure Type', value: bug.failureType },
       { field: 'Automation', value: 'Playwright' },
-      { field: 'Browser', value: 'Chromium' },
+      { field: 'Browser', value: getBrowserFromProject(bug.project || '') },
       { field: 'Environment', value: 'CI' },
     ];
 

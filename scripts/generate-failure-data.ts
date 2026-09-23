@@ -85,21 +85,26 @@ function getGitInfo(): { branch: string; commit: string } {
 function determineFailureType(errorMessage: string, projectName: string): FailureData['failureType'] {
   const lower = errorMessage.toLowerCase();
 
-  if (projectName === 'api' || lower.includes('http') || lower.includes('status') || lower.includes('response') || lower.includes('api')) {
+  if (projectName === 'api') {
     return 'API';
   }
+
   if (lower.includes('timeout') || lower.includes('connect') || lower.includes('network') || lower.includes('econn') || lower.includes('enotfound')) {
     return 'Environment';
   }
-  if (lower.includes('assert') || lower.includes('expect') || lower.includes('toBe') || lower.includes('tocontain') || lower.includes('visible') || lower.includes('enabled')) {
+
+  if (lower.includes('assert') || lower.includes('expect') || lower.includes('tobe') || lower.includes('tocontain') || lower.includes('visible') || lower.includes('enabled')) {
     return 'UI';
   }
+
   if (lower.includes('not found') || lower.includes('no data') || lower.includes('empty') || lower.includes('null')) {
     return 'Data';
   }
+
   if (lower.includes('flaky') || lower.includes('retry') || lower.includes('timed out') || lower.includes('stale')) {
     return 'Environment';
   }
+
   return 'Unknown';
 }
 

@@ -32,8 +32,14 @@ interface BugAnalysis {
   priority: string;
   classification: 'PRODUCT_BUG' | 'TEST_DEFECT' | 'TEST_INFRASTRUCTURE' | 'UNKNOWN';
   confidence: number;
-  relevantEvidence?: string[];
+  relevantEvidence: string[];
+  aiAnalysisSucceeded: boolean;
+  fallbackUsed: boolean;
+  aiError?: string;
   error?: string;
+  branch?: string;
+  commit?: string;
+  project?: string;
 }
 
 type AnalysisEntry = {
@@ -150,7 +156,7 @@ const BUG_ANALYSIS_SCHEMA = {
     confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Confidence level 0.0-1.0' },
     relevantEvidence: { type: 'array', items: { type: 'string' }, description: 'Relevant evidence references', default: [] },
   },
-  required: ['title', 'summary', 'stepsToReproduce', 'expectedResult', 'actualResult', 'failureType', 'severity', 'priority', 'classification', 'confidence'],
+  required: ['title', 'summary', 'stepsToReproduce', 'expectedResult', 'actualResult', 'failureType', 'severity', 'priority', 'classification', 'confidence', 'relevantEvidence'],
   additionalProperties: false,
 } as const;
 
@@ -336,7 +342,13 @@ function createEvidenceOnlyFallback(failure: FailureData, aiError?: string): Bug
     classification: 'UNKNOWN',
     confidence: 0.1,
     relevantEvidence: [],
+    aiAnalysisSucceeded: false,
+    fallbackUsed: true,
+     aiError: aiError ? `AI analysis failed: ${aiError}` : 'Evidence-only fallback (AI analysis unavailable)',
     error: aiError ? `AI analysis failed: ${aiError}. Fallback based on evidence only.` : 'Evidence-only fallback (AI analysis unavailable)',
+    branch: failure.branch,
+    commit: failure.commit,
+    project: failure.project,
   };
 }
 
@@ -382,7 +394,12 @@ async function analyseWithRetry(
   return createEvidenceOnlyFallback(failure, lastError);
 }
 
-function validateBugAnalysis(analysis: BugAnalysis): BugAnalysis {
+function validateBugAnalysis(
+  analysis: BugAnalysis,
+  failure: FailureData,
+  fallbackUsed = false,
+  aiError?: string
+): BugAnalysis {
   return {
     title: analysis.title || 'Untitled Bug',
     summary: analysis.summary || '',
@@ -395,7 +412,13 @@ function validateBugAnalysis(analysis: BugAnalysis): BugAnalysis {
     classification: analysis.classification || 'UNKNOWN',
     confidence: typeof analysis.confidence === 'number' ? analysis.confidence : 0,
     relevantEvidence: analysis.relevantEvidence || [],
+    aiAnalysisSucceeded: !fallbackUsed,
+    fallbackUsed,
+    aiError: aiError || analysis.aiError,
     error: analysis.error,
+    branch: failure.branch,
+    commit: failure.commit,
+    project: failure.project,
   };
 }
 
@@ -412,25 +435,42 @@ async function main() {
 
   const failures = loadFailureData();
 
-  if (failures.length === 0) {
+  const uniqueFailures: FailureData[] = Array.from(
+    new Map(
+      failures.map(f => [`${f.testName}|${f.project}|${f.error}`, f] as const)
+    ).values()
+  );
+
+  if (uniqueFailures.length < failures.length) {
+    console.log(`Deduplicated ${failures.length} failures to ${uniqueFailures.length} unique.`);
+  }
+
+  if (uniqueFailures.length === 0) {
     console.log('No failures to analyse.');
   }
 
-  console.log(`Failures available for AI analysis: ${failures.length}`);
+  console.log(`Failures available for AI analysis: ${uniqueFailures.length}`);
 
   const analyses: AnalysisEntry[] = [];
 
-  for (const failure of failures) {
+  for (const failure of uniqueFailures) {
     console.log(`\n  Analysing: ${failure.testName}`);
 
     try {
       const analysis = await analyseWithRetry(failure, apiKey, model);
-      const validated = validateBugAnalysis(analysis);
+      const validated = validateBugAnalysis(analysis, failure, analysis.fallbackUsed, analysis.aiError);
       analyses.push({ failure, analysis: validated });
 
       console.log(`  → Title: ${validated.title}`);
       console.log(`  → Classification: ${validated.classification}`);
       console.log(`  → Confidence: ${validated.confidence}`);
+
+      if (validated.fallbackUsed) {
+        console.log(`  → AI Analysis: FAILED (using fallback)`);
+        console.log(`  → Error: ${validated.aiError}`);
+      } else {
+        console.log(`  → AI Analysis: SUCCESS`);
+      }
 
       if (validated.error) {
         console.log(`  → Warning: ${validated.error}`);
@@ -440,7 +480,8 @@ async function main() {
       console.error(`  → Unexpected error: ${message}`);
 
       const fallback = createEvidenceOnlyFallback(failure, message);
-      analyses.push({ failure, analysis: fallback });
+      const validated = validateBugAnalysis(fallback, failure, true, message);
+      analyses.push({ failure, analysis: validated });
     }
   }
 

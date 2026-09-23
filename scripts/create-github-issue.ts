@@ -1,7 +1,6 @@
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
 
 interface BugAnalysis {
   title: string;
@@ -15,7 +14,13 @@ interface BugAnalysis {
   classification: string;
   confidence: number;
   relevantEvidence?: string[];
+  aiAnalysisSucceeded?: boolean;
+  fallbackUsed?: boolean;
+  aiError?: string;
   error?: string;
+  branch?: string;
+  commit?: string;
+  project?: string;
 }
 
 interface CreatedIssue {
@@ -29,8 +34,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
 function getRepoInfo(): { owner: string; repo: string } {
+  const ghRepo = process.env.GITHUB_REPOSITORY;
+  if (ghRepo) {
+    const [owner, repoName] = ghRepo.split('/');
+    if (owner && repoName) {
+      return { owner, repo: repoName };
+    }
+  }
+
   try {
-    const remote = execSync('git config --get remote.origin.url', { cwd: rootDir, encoding: 'utf-8' }).trim();
+    const remote = require('child_process').execSync('git config --get remote.origin.url', { cwd: rootDir, encoding: 'utf-8' }).trim();
     const match = remote.match(/(?:git@github\.com:|https:\/\/github\.com\/)([^\/\s]+)\/([^\/\s]+?)(?:\.git)?$/);
     if (match) {
       return { owner: match[1], repo: match[2] };
@@ -38,7 +51,7 @@ function getRepoInfo(): { owner: string; repo: string } {
   } catch {
     // ignore
   }
-  throw new Error('Could not determine GitHub repository from git remote.');
+  throw new Error('Could not determine GitHub repository.');
 }
 
 function getWorkflowRunInfo(): { workflowRunUrl: string } {
@@ -50,7 +63,7 @@ function getWorkflowRunInfo(): { workflowRunUrl: string } {
   return { workflowRunUrl };
 }
 
-function loadValidatedBugs(): Array<BugAnalysis & { validation?: { valid: boolean; issues: string[]; correctedBug?: BugAnalysis } }> {
+function loadValidatedBugs(): Array<BugAnalysis & { validation?: { valid: boolean; issues: string[]; classification: string; skipped: boolean; correctedBug?: BugAnalysis } }> {
   const path = join(rootDir, 'validated-bug.json');
   if (!existsSync(path)) {
     console.error('No validated-bug.json found. Run validate-with-copilot.ts first.');
@@ -68,6 +81,8 @@ async function createIssue(bug: BugAnalysis, owner: string, repo: string, token:
   const stepsList = bug.stepsToReproduce.map((step, i) => `${i + 1}. ${step}`).join('\n');
 
   const classificationLabel = bug.classification === 'PRODUCT_BUG' ? 'Product Bug' : bug.classification;
+  const branch = bug.branch || 'unknown';
+  const commit = bug.commit || 'unknown';
 
   const body = `## Summary
 
@@ -77,18 +92,20 @@ ${bug.summary}
 
 - **Classification**: ${classificationLabel}
 - **Confidence**: ${(bug.confidence * 100).toFixed(0)}%
+${bug.fallbackUsed ? `- **AI Analysis**: Fallback used (AI analysis failed)\n` : ''}
+${bug.aiError ? `- **AI Error**: ${bug.aiError}\n` : ''}` +
 
-## Steps to Reproduce
+  `## Steps to Reproduce
 
-${stepsList}
+${stepsList || 'Not specified'}
 
 ## Expected Result
 
-${bug.expectedResult}
+${bug.expectedResult || 'Not specified'}
 
 ## Actual Result
 
-${bug.actualResult}
+${bug.actualResult || 'Not specified'}
 
 ## Test
 
@@ -96,10 +113,13 @@ ${bug.actualResult}
 
 ## Environment
 
-- Failure Type: ${bug.failureType}
-- CI: GitHub Actions
-- Branch: unknown
-- Commit: unknown
+- **Failure Type**: ${bug.failureType || 'Unknown'}
+- **CI**: GitHub Actions
+- **Branch**: ${branch}
+- **Commit**: ${commit}
+- **Project**: ${bug.project || 'unknown'}` +
+
+  `
 
 ## Evidence
 
@@ -123,7 +143,12 @@ ${bug.actualResult}
     body: JSON.stringify({
       title: `[${classificationLabel}] ${bug.title}`,
       body,
-      labels: [bug.priority, bug.severity, `failure:${bug.failureType.toLowerCase()}`, `classification:${bug.classification.toLowerCase()}`],
+      labels: [
+        `priority:${bug.priority?.toLowerCase() || 'p3'}`,
+        `severity:${bug.severity?.toLowerCase() || 'medium'}`,
+        `failure:${bug.failureType?.toLowerCase() || 'unknown'}`,
+        `classification:${bug.classification?.toLowerCase() || 'unknown'}`,
+      ],
     }),
   });
 
@@ -150,6 +175,7 @@ async function main() {
 
   const createdIssues: Array<{ bug: BugAnalysis; issue: CreatedIssue; labels: string[] }> = [];
   const failedIssues: Array<{ bug: BugAnalysis; error: string }> = [];
+  const skippedIssues: Array<{ bug: BugAnalysis; reason: string }> = [];
 
   console.log('');
   console.log('========================================');
@@ -161,8 +187,22 @@ async function main() {
   for (const bug of bugs) {
     const classification = bug.classification || 'UNKNOWN';
 
+    if (classification === 'UNKNOWN') {
+      console.log(`  Skipping "${bug.title}" — classification is UNKNOWN (requires human review).`);
+      skippedIssues.push({ bug, reason: 'UNKNOWN classification' });
+      continue;
+    }
+
     if (classification === 'TEST_INFRASTRUCTURE' || classification === 'TEST_DEFECT') {
       console.log(`  Skipping "${bug.title}" — classification is ${classification} (infrastructure/test issues excluded).`);
+      skippedIssues.push({ bug, reason: `${classification}` });
+      continue;
+    }
+
+    const valid = bug.validation?.valid ?? true;
+    if (bug.fallbackUsed || !valid) {
+      console.log(`  Skipping "${bug.title}" — AI analysis fallback used or validation failed. Classification may be unreliable.`);
+      skippedIssues.push({ bug, reason: 'AI fallback or validation failure' });
       continue;
     }
 
@@ -193,7 +233,12 @@ async function main() {
   console.log(`Bug candidates: ${bugs.length}`);
   console.log(`Issues created: ${createdIssues.length}`);
   console.log(`Issues failed: ${failedIssues.length}`);
+  console.log(`Issues skipped: ${skippedIssues.length}`);
   console.log('========================================');
+
+  for (const { bug, reason } of skippedIssues) {
+    console.log(`  Skipped: "${bug.title}" — ${reason}`);
+  }
 
   if (failedIssues.length > 0) {
     console.error('');

@@ -15,7 +15,13 @@ interface BugAnalysis {
   classification: string;
   confidence: number;
   relevantEvidence?: string[];
+  aiAnalysisSucceeded?: boolean;
+  fallbackUsed?: boolean;
+  aiError?: string;
   error?: string;
+  branch?: string;
+  commit?: string;
+  project?: string;
 }
 
 interface ValidationResult {
@@ -36,29 +42,38 @@ function loadBugAnalysis(): Array<{ failure: unknown; analysis: BugAnalysis }> {
   return JSON.parse(readFileSync(path, 'utf-8'));
 }
 
-function loadRepositories(): string[] {
-  const repos: string[] = [];
-
-  try {
-    const remotes = execSync('git remote -v', { cwd: rootDir, encoding: 'utf-8' }).trim();
-    for (const line of remotes.split('\n')) {
-      const match = line.match(/(?:git@github\.com:|https:\/\/github\.com\/)([^\/\s]+(?:\/[^\/\s]+?)(?=\.git|$))/);
-      if (match) {
-        repos.push(match[1]);
-      }
+function getRepoInfo(): { owner: string; repo: string } | null {
+  const ghRepo = process.env.GITHUB_REPOSITORY;
+  if (ghRepo) {
+    const [owner, repoName] = ghRepo.split('/');
+    if (owner && repoName) {
+      return { owner, repo: repoName };
     }
-  } catch {
-    console.warn('Could not detect GitHub remote.');
   }
 
-  return [...new Set(repos)];
+  try {
+    const remote = execSync('git config --get remote.origin.url', { cwd: rootDir, encoding: 'utf-8' }).trim();
+    const match = remote.match(/(?:git@github\.com:|https:\/\/github\.com\/)([^\/\s]+)\/([^\/\s]+?)(?:\.git)?$/);
+    if (match) {
+      return { owner: match[1], repo: match[2] };
+    }
+  } catch {
+    console.warn('Could not detect GitHub remote via git.');
+  }
+
+  return null;
 }
 
-async function validateWithCopilot(analysis: BugAnalysis, testCode: string): Promise<ValidationResult> {
+async function validateWithCopilot(analysis: BugAnalysis, testCode: string, repo: string | null): Promise<ValidationResult> {
   const token = process.env.COPILOT_GITHUB_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) {
     console.warn('No Copilot token available. Skipping Copilot validation.');
-    return { valid: true, issues: [], correctedBug: analysis };
+    return { valid: false, issues: ['No Copilot token available — validation skipped'], correctedBug: null };
+  }
+
+  if (!repo) {
+    console.warn('Could not determine GitHub repository. Skipping Copilot validation.');
+    return { valid: false, issues: ['Could not determine repository — validation skipped'], correctedBug: null };
   }
 
   const prompt = `Review the generated QA bug report against the Playwright repository.
@@ -99,13 +114,7 @@ Return valid JSON only with this structure:
 
   try {
     const ghApiBase = 'https://api.github.com';
-    const repos = loadRepositories();
-    const repo = repos[0] || '';
-
-    if (!repo) {
-      console.warn('Could not determine GitHub repository. Skipping Copilot validation.');
-      return { valid: true, issues: [], correctedBug: analysis };
-    }
+    const ownerRepo = `${repo}`;
 
     const response = await fetch(`${ghApiBase}/copilot-spaces/actions/run`, {
       method: 'POST',
@@ -116,21 +125,21 @@ Return valid JSON only with this structure:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        repository: repo,
+        repository: ownerRepo,
         prompt: prompt,
       }),
     });
 
     if (!response.ok) {
       console.warn(`Copilot validation API returned ${response.status}. Using unvalidated result.`);
-      return { valid: true, issues: [], correctedBug: analysis };
+      return { valid: false, issues: [`Copilot API error ${response.status}`], correctedBug: null };
     }
 
     const body = await response.json() as ValidationResult;
     return body;
   } catch (error) {
     console.warn(`Copilot validation failed: ${error instanceof Error ? error.message : error}. Using unvalidated result.`);
-    return { valid: true, issues: [], correctedBug: analysis };
+    return { valid: false, issues: [`Copilot validation exception: ${error instanceof Error ? error.message : error}`], correctedBug: null };
   }
 }
 
@@ -157,6 +166,14 @@ async function main() {
 
   console.log(`Analyses to validate: ${entries.length}`);
 
+  const repoInfo = getRepoInfo();
+  const repo = repoInfo ? `${repoInfo.owner}/${repoInfo.repo}` : null;
+  if (repo) {
+    console.log(`Using repository: ${repo}`);
+  } else {
+    console.warn('Repository not available — Copilot validation will be skipped.');
+  }
+
   const results: Array<{ failure: unknown; analysis: BugAnalysis; validation: ValidationResult }> = [];
 
   for (const entry of entries) {
@@ -164,7 +181,7 @@ async function main() {
     console.log(`Validating: ${analysis.title}`);
 
     const testCode = findTestCode(analysis.stepsToReproduce[0] || analysis.title);
-    const validation = await validateWithCopilot(analysis, testCode);
+    const validation = await validateWithCopilot(analysis, testCode, repo);
 
     console.log(`  → Valid: ${validation.valid}`);
     if (validation.issues.length > 0) {
@@ -183,6 +200,11 @@ async function main() {
   const outputData = results.map(({ analysis, validation }) => {
     const base = validation.correctedBug ?? analysis;
     const finalClassification = (base.classification || analysis.classification || 'UNKNOWN') as string;
+    const finalConfidence = typeof base.confidence === 'number' ? base.confidence : (analysis.confidence ?? 0);
+    const finalError = base.error ?? analysis.error;
+
+    const validationSkipped = !validation.valid && validation.issues.some(i => i.includes('skipped')) && !validation.correctedBug;
+
     return {
       title: base.title || analysis.title,
       summary: base.summary || '',
@@ -193,13 +215,20 @@ async function main() {
       severity: base.severity || 'Medium',
       priority: base.priority || 'P3',
       classification: finalClassification,
-      confidence: typeof base.confidence === 'number' ? base.confidence : 0,
+      confidence: finalConfidence,
       relevantEvidence: base.relevantEvidence || [],
-      error: base.error ?? analysis.error,
+      aiAnalysisSucceeded: analysis.aiAnalysisSucceeded ?? false,
+      fallbackUsed: analysis.fallbackUsed ?? false,
+      aiError: analysis.aiError ?? base.aiError,
+      error: finalError,
+      branch: base.branch ?? analysis.branch,
+      commit: base.commit ?? analysis.commit,
+      project: base.project ?? analysis.project,
       validation: {
         valid: validation.valid,
         issues: validation.issues,
         classification: finalClassification,
+        skipped: validationSkipped,
         correctedBug: validation.correctedBug,
       },
     };
