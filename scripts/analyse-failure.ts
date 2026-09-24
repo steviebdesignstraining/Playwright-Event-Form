@@ -77,10 +77,10 @@ function envNumber(name: string, fallback: number): number {
   return process.env[name] !== undefined && process.env[name] !== '' && Number.isFinite(parsed) ? parsed : fallback;
 }
 
-const PRIMARY_MODEL = 'gemini-3.8-flash';
+const PRIMARY_MODEL = 'gemini-3.6-flash';
 // GEMINI_FALLBACK_MODEL may be a comma-separated list, tried in order after the primary model.
 // Free-tier quota is tracked per model, so every extra model is an extra daily allowance.
-const DEFAULT_FALLBACK_MODELS = ['gemini-3.7-flash'];
+const DEFAULT_FALLBACK_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
 
 const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai';
 
@@ -331,7 +331,6 @@ async function callGemini(
         { role: 'system', content: systemPrompt },
         { role: 'user', content: evidence },
       ],
-      temperature: 0.1,
       max_tokens: MAX_OUTPUT_TOKENS,
       response_format: {
         type: 'json_schema',
