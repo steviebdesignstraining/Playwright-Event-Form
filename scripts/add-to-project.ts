@@ -29,7 +29,7 @@ interface IssueWithMetadata {
 interface ProjectField {
   id: string;
   name: string;
-  type: string;
+  dataType: string;
   options?: Array<{ name: string; id: string }>;
 }
 
@@ -125,22 +125,12 @@ async function findProject(token: string, owner: string, repo: string, projectNa
     number
     fields(first: 50) {
       nodes {
-        id
-        name
-        type
+        ... on ProjectV2FieldCommon {
+          id
+          name
+          dataType
+        }
         ... on ProjectV2SingleSelectField {
-          options {
-            id
-            name
-          }
-        }
-        ... on ProjectV2MultiSelectField {
-          options {
-            id
-            name
-          }
-        }
-        ... on ProjectV2FieldConfiguration {
           options {
             id
             name
@@ -151,10 +141,13 @@ async function findProject(token: string, owner: string, repo: string, projectNa
   `;
 
   // 1. Try user-level project (personal account projects like "@steviebdesignstraining's Automation Tests")
+  // Note: do NOT use the `query` parameter for projectsV2 — GitHub interprets it as a search
+  // expression, so apostrophes in names (e.g. "steviebdesignstraining's") cause no matches.
+  // Fetch all projects and filter by exact title in TypeScript instead.
   const userQuery = `
-    query($login: String!, $projectName: String!) {
+    query($login: String!) {
       user(login: $login) {
-        projectsV2(first: 20, query: $projectName) {
+        projectsV2(first: 20) {
           nodes {
             ${projectFieldsFragment}
           }
@@ -163,7 +156,7 @@ async function findProject(token: string, owner: string, repo: string, projectNa
     }
   `;
 
-  const userResult = await graphqlRequest(token, userQuery, { login: owner, projectName }) as {
+  const userResult = await graphqlRequest(token, userQuery, { login: owner }) as {
     user?: {
       projectsV2?: {
         nodes: Array<{ id: string; title: string; fields: { nodes: ProjectField[] } }>;
@@ -177,39 +170,15 @@ async function findProject(token: string, owner: string, repo: string, projectNa
     console.log(`  → Found project "${projectName}" under user ${owner}`);
     return { id: userProject.id, title: userProject.title, fields: userProject.fields.nodes };
   }
-
-  // 2. Try organization-level project (using projectV2ByName)
-  const orgQuery = `
-    query($owner: String!, $projectName: String!) {
-      organization(login: $owner) {
-        projectV2ByName(name: $projectName) {
-          ${projectFieldsFragment}
-        }
-      }
-    }
-  `;
-
-  const orgResult = await graphqlRequest(token, orgQuery, { owner, projectName }) as {
-    organization?: {
-      projectV2ByName?: {
-        id: string;
-        title: string;
-        fields: { nodes: ProjectField[] };
-      } | null;
-    } | null;
-  };
-
-  if (orgResult?.organization?.projectV2ByName) {
-    const project = orgResult.organization.projectV2ByName;
-    console.log(`  → Found project "${projectName}" under organization ${owner}`);
-    return { id: project.id, title: project.title, fields: project.fields.nodes };
+  if (userProjects.length > 0) {
+    console.log(`  → No exact title match under user ${owner}. Candidates: ${userProjects.map(p => `"${p.title}"`).join(', ')}`);
   }
 
-  // 3. Try repository-level project (Repository does not have projectV2ByName, use projectsV2 + title filter)
-  const repoQuery = `
-    query($owner: String!, $repo: String!, $projectName: String!) {
-      repository(owner: $owner, name: $repo) {
-        projectsV2(first: 20, query: $projectName) {
+  // 2. Try organization-level project (list all, filter by exact title)
+  const orgQuery = `
+    query($login: String!) {
+      organization(login: $login) {
+        projectsV2(first: 20) {
           nodes {
             ${projectFieldsFragment}
           }
@@ -218,7 +187,50 @@ async function findProject(token: string, owner: string, repo: string, projectNa
     }
   `;
 
-  const repoResult = await graphqlRequest(token, repoQuery, { owner, repo, projectName }) as {
+  let orgResult: {
+    organization?: {
+      projectsV2?: {
+        nodes: Array<{ id: string; title: string; fields: { nodes: ProjectField[] } }>;
+      };
+    } | null;
+  } | undefined;
+
+  try {
+    orgResult = await graphqlRequest(token, orgQuery, { login: owner }) as typeof orgResult;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('Could not resolve to an Organization')) {
+      // owner is a user account, not an organization — expected, try the next lookup
+      orgResult = undefined;
+    } else {
+      throw error;
+    }
+  }
+
+  const orgProjects = orgResult?.organization?.projectsV2?.nodes ?? [];
+  const orgProject = orgProjects.find(p => p.title === projectName);
+  if (orgProject) {
+    console.log(`  → Found project "${projectName}" under organization ${owner}`);
+    return { id: orgProject.id, title: orgProject.title, fields: orgProject.fields.nodes };
+  }
+  if (orgProjects.length > 0) {
+    console.log(`  → No exact title match under organization ${owner}. Candidates: ${orgProjects.map(p => `"${p.title}"`).join(', ')}`);
+  }
+
+  // 3. Try repository-level project (list all, filter by exact title)
+  const repoQuery = `
+    query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        projectsV2(first: 20) {
+          nodes {
+            ${projectFieldsFragment}
+          }
+        }
+      }
+    }
+  `;
+
+  const repoResult = await graphqlRequest(token, repoQuery, { owner, repo }) as {
     repository?: {
       projectsV2?: {
         nodes: Array<{ id: string; title: string; fields: { nodes: ProjectField[] } }>;
@@ -231,6 +243,9 @@ async function findProject(token: string, owner: string, repo: string, projectNa
   if (repoProject) {
     console.log(`  → Found project "${projectName}" under repository ${owner}/${repo}`);
     return { id: repoProject.id, title: repoProject.title, fields: repoProject.fields.nodes };
+  }
+  if (repoProjects.length > 0) {
+    console.log(`  → No exact title match under repository ${owner}/${repo}. Candidates: ${repoProjects.map(p => `"${p.title}"`).join(', ')}`);
   }
 
   return null;
@@ -301,7 +316,7 @@ async function setFieldValue(
 ): Promise<void> {
   let variables: Record<string, unknown>;
 
-  if (field.type === 'SINGLE_SELECT' && field.options) {
+  if (field.dataType === 'SINGLE_SELECT' && field.options) {
     const option = field.options.find(o => o.name === value);
     if (!option) {
       console.warn(`  → Option "${value}" not found for field "${field.name}"`);
@@ -313,34 +328,22 @@ async function setFieldValue(
       fieldId: field.id,
       value: { optionId: option.id },
     };
-  } else if (field.type === 'MULTI_SELECT' && field.options) {
-    const option = field.options.find(o => o.name === value);
-    if (!option) {
-      console.warn(`  → Option "${value}" not found for field "${field.name}"`);
-      return;
-    }
-    variables = {
-      projectId,
-      itemId,
-      fieldId: field.id,
-      value: { optionIds: [option.id] },
-    };
-  } else if (field.type === 'TEXT') {
+  } else if (field.dataType === 'TEXT') {
     variables = {
       projectId,
       itemId,
       fieldId: field.id,
       value: { text: value },
     };
-  } else if (field.type === 'NUMBER') {
+  } else if (field.dataType === 'NUMBER') {
     variables = {
       projectId,
       itemId,
       fieldId: field.id,
-      value: { number: value },
+      value: { number: Number(value) },
     };
   } else {
-    console.warn(`  → Field "${field.name}" type "${field.type}" is not supported`);
+    console.warn(`  → Field "${field.name}" type "${field.dataType}" is not supported`);
     return;
   }
 
