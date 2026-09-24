@@ -50,9 +50,45 @@ type AnalysisEntry = {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
-const MODEL_FALLBACKS = ['gpt-5.6-luna', 'gpt-4o', 'gpt-4o-mini'];
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-lite'];
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 2000;
+
+const BUG_ANALYSIS_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    title: { type: 'string', description: 'Specific title describing the affected functionality and observed failure' },
+    summary: { type: 'string', description: 'Brief summary of the defect' },
+    stepsToReproduce: { type: 'array', items: { type: 'string' }, description: 'Reproduction steps based on actual Playwright test actions' },
+    expectedResult: { type: 'string', description: 'What the test expected to happen' },
+    actualResult: { type: 'string', description: 'What actually happened (the failure)' },
+    failureType: { type: 'string', enum: ['UI', 'API', 'Data', 'Environment', 'Unknown'], description: 'Classification of failure by type' },
+    severity: { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'], description: 'Severity of the failure' },
+    priority: { type: 'string', enum: ['P1', 'P2', 'P3', 'P4'], description: 'Priority of the fix' },
+    classification: { type: 'string', enum: ['PRODUCT_BUG', 'TEST_DEFECT', 'TEST_INFRASTRUCTURE', 'UNKNOWN'], description: 'Whether this is a product bug, test defect, test infrastructure issue, or unknown' },
+    confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Confidence level 0.0-1.0' },
+    relevantEvidence: { type: 'array', items: { type: 'string' }, description: 'Relevant evidence references' },
+  },
+  required: ['title', 'summary', 'stepsToReproduce', 'expectedResult', 'actualResult', 'failureType', 'severity', 'priority', 'classification', 'confidence', 'relevantEvidence'],
+  additionalProperties: false,
+} as const;
+
+const SYSTEM_PROMPT = `You are an AI QA Defect Analysis Agent.
+
+Analyse the supplied Playwright test failure and convert the failure evidence into a structured software defect.
+
+PRODUCT_BUG = The application behaves incorrectly. A genuine software defect.
+TEST_DEFECT = The test expectation or implementation is wrong. The application may be working correctly.
+TEST_INFRASTRUCTURE = CI/test environment failure (browser crash, network timeout, environment unavailable).
+UNKNOWN = Insufficient evidence to classify confidently.
+
+Use ONLY the evidence provided. Do not invent application behaviour, reproduction steps, expected results, API responses, or environment information that is not present in the evidence.
+
+The bug title must describe the actual failure — not generic titles like "Playwright test failed" or "Automated test failure".
+
+Reproduction steps must be based on the actual Playwright test actions.
+
+Return valid JSON matching the provided schema.`;
 
 function loadFailureData(): FailureData[] {
   const path = join(rootDir, 'failure-data.json');
@@ -95,9 +131,9 @@ function loadPageObjects(): string {
 }
 
 function loadSelectors(): string {
-  const path = join(rootDir, 'e2e', 'selectors', 'index.ts');
-  if (existsSync(path)) {
-    return readFileSync(path, 'utf-8');
+  const selectorPath = join(rootDir, 'e2e', 'selectors', 'index.ts');
+  if (existsSync(selectorPath)) {
+    return readFileSync(selectorPath, 'utf-8');
   }
   return '';
 }
@@ -141,49 +177,13 @@ ${selectors || 'Not found'}
 --- END EVIDENCE ---`;
 }
 
-const BUG_ANALYSIS_SCHEMA = {
-  type: 'object' as const,
-  properties: {
-    title: { type: 'string', description: 'Specific title describing the affected functionality and observed failure' },
-    summary: { type: 'string', description: 'Brief summary of the defect' },
-    stepsToReproduce: { type: 'array', items: { type: 'string' }, description: 'Reproduction steps based on actual Playwright test actions' },
-    expectedResult: { type: 'string', description: 'What the test expected to happen' },
-    actualResult: { type: 'string', description: 'What actually happened (the failure)' },
-    failureType: { type: 'string', enum: ['UI', 'API', 'Data', 'Environment', 'Unknown'], description: 'Classification of failure by type' },
-    severity: { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'], description: 'Severity of the failure' },
-    priority: { type: 'string', enum: ['P1', 'P2', 'P3', 'P4'], description: 'Priority of the fix' },
-    classification: { type: 'string', enum: ['PRODUCT_BUG', 'TEST_DEFECT', 'TEST_INFRASTRUCTURE', 'UNKNOWN'], description: 'Whether this is a product bug, test defect, test infrastructure issue, or unknown' },
-    confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Confidence level 0.0-1.0' },
-    relevantEvidence: { type: 'array', items: { type: 'string' }, description: 'Relevant evidence references', default: [] },
-  },
-  required: ['title', 'summary', 'stepsToReproduce', 'expectedResult', 'actualResult', 'failureType', 'severity', 'priority', 'classification', 'confidence', 'relevantEvidence'],
-  additionalProperties: false,
-} as const;
-
-const SYSTEM_PROMPT = `You are an AI QA Defect Analysis Agent.
-
-Analyse the supplied Playwright test failure and convert the failure evidence into a structured software defect.
-
-PRODUCT_BUG = The application behaves incorrectly. A genuine software defect.
-TEST_DEFECT = The test expectation or implementation is wrong. The application may be working correctly.
-TEST_INFRASTRUCTURE = CI/test environment failure (browser crash, network timeout, environment unavailable).
-UNKNOWN = Insufficient evidence to classify confidently.
-
-Use ONLY the evidence provided. Do not invent application behaviour, reproduction steps, expected results, API responses, or environment information that is not present in the evidence.
-
-The bug title must describe the actual failure — not generic titles like "Playwright test failed" or "Automated test failure".
-
-Reproduction steps must be based on the actual Playwright test actions.
-
-Return valid JSON matching the provided schema.`;
-
-async function callOpenAI(
+async function callGemini(
   apiKey: string,
   model: string,
-  prompt: string,
+  systemPrompt: string,
   evidence: string
 ): Promise<BugAnalysis> {
-  const response = await fetch('https://api.openai.com/v1/responses', {
+  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -191,16 +191,16 @@ async function callOpenAI(
     },
     body: JSON.stringify({
       model,
-      input: [
-        { role: 'system', content: prompt },
+      messages: [
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: evidence },
       ],
-      text: {
-        format: {
-          type: 'json_schema',
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
           name: 'bug_analysis',
-          schema: BUG_ANALYSIS_SCHEMA,
           strict: true,
+          schema: BUG_ANALYSIS_SCHEMA,
         },
       },
     }),
@@ -212,66 +212,50 @@ async function callOpenAI(
 
     try {
       const parsed = JSON.parse(errorBody);
-      errorDetail = parsed.error?.message || errorBody;
+      errorDetail = parsed.error?.message || parsed.message || errorBody;
     } catch {
       // use raw error body
     }
 
-    throw new Error(`OpenAI API error (${response.status}): ${errorDetail}`);
+    throw new Error(`Gemini API error (${response.status}): ${errorDetail}`);
   }
 
   const body = await response.json() as {
-    output?: Array<{
-      type?: string;
-      content?: Array<{ type?: string; text?: string }>;
-    }>;
-    output_text?: string;
+    choices?: Array<{ message: { content: string } }>;
     error?: { message: string };
   };
 
   if (body.error) {
-    throw new Error(`OpenAI API error: ${body.error.message}`);
+    throw new Error(`Gemini API error: ${body.error.message}`);
   }
 
-  let jsonText = body.output_text || '';
+  const aiResponse = body.choices?.[0]?.message?.content || '';
 
-  if (!jsonText) {
-    for (const output of body.output || []) {
-      if (output.type === 'message' || output.type === 'function_call') {
-        for (const content of output.content || []) {
-          if (content.type === 'output_text' && content.text) {
-            jsonText = content.text;
-          }
-        }
-      }
-    }
-  }
-
-  if (!jsonText) {
-    throw new Error('OpenAI Responses API returned no output text');
+  if (!aiResponse) {
+    throw new Error('Gemini API returned no content');
   }
 
   try {
-    return JSON.parse(jsonText) as BugAnalysis;
+    return JSON.parse(aiResponse) as BugAnalysis;
   } catch {
-    const cleaned = jsonText.trim();
+    const cleaned = aiResponse.trim();
     const firstBrace = cleaned.indexOf('{');
     const lastBrace = cleaned.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace !== -1) {
       const extracted = cleaned.substring(firstBrace, lastBrace + 1);
       return JSON.parse(extracted) as BugAnalysis;
     }
-    throw new Error(`Failed to parse OpenAI response as JSON: ${jsonText.substring(0, 200)}`);
+    throw new Error(`Failed to parse Gemini response as JSON: ${aiResponse.substring(0, 200)}`);
   }
 }
 
-async function callOpenAIFallback(
+async function callGeminiFallback(
   apiKey: string,
   model: string,
   systemPrompt: string,
   evidence: string
 ): Promise<BugAnalysis> {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -299,19 +283,19 @@ async function callOpenAIFallback(
       // use raw error body
     }
 
-    throw new Error(`OpenAI API error (${response.status}): ${errorDetail}`);
+    throw new Error(`Gemini API error (${response.status}): ${errorDetail}`);
   }
 
   const body = await response.json() as {
-    choices: Array<{ message: { content: string } }>;
+    choices?: Array<{ message: { content: string } }>;
     error?: { message: string };
   };
 
   if (body.error) {
-    throw new Error(`OpenAI API error: ${body.error.message}`);
+    throw new Error(`Gemini API error: ${body.error.message}`);
   }
 
-  const aiResponse = body.choices[0]?.message?.content || '{}';
+  const aiResponse = body.choices?.[0]?.message?.content || '{}';
 
   try {
     return JSON.parse(aiResponse) as BugAnalysis;
@@ -323,7 +307,7 @@ async function callOpenAIFallback(
       const extracted = cleaned.substring(firstBrace, lastBrace + 1);
       return JSON.parse(extracted) as BugAnalysis;
     }
-    throw new Error(`Failed to parse OpenAI response as JSON: ${aiResponse.substring(0, 200)}`);
+    throw new Error(`Failed to parse Gemini response as JSON: ${aiResponse.substring(0, 200)}`);
   }
 }
 
@@ -358,7 +342,7 @@ async function analyseWithRetry(
   model: string
 ): Promise<BugAnalysis> {
   const evidence = buildEvidence(failure);
-  const modelsToTry = [model, ...MODEL_FALLBACKS.filter(m => m !== model)];
+  const modelsToTry = [model, ...GEMINI_MODELS.filter(m => m !== model)];
   const primaryModel = model;
 
   let lastError: string | undefined;
@@ -366,7 +350,6 @@ async function analyseWithRetry(
 
   for (const tryModel of modelsToTry) {
     if (hitRateLimit) {
-      console.warn(`  → Skipping model ${tryModel} due to earlier 429 rate limit.`);
       break;
     }
 
@@ -382,14 +365,19 @@ async function analyseWithRetry(
           await sleep(RETRY_DELAY_MS * attempt);
         }
 
-        const analysis = await callOpenAI(apiKey, tryModel, SYSTEM_PROMPT, evidence);
+        let analysis: BugAnalysis;
+        try {
+          analysis = await callGemini(apiKey, tryModel, SYSTEM_PROMPT, evidence);
+        } catch {
+          analysis = await callGeminiFallback(apiKey, tryModel, SYSTEM_PROMPT, evidence);
+        }
         return analysis;
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
         console.warn(`    Attempt ${attempt} with ${tryModel} failed: ${lastError}`);
 
-        if (lastError.includes('429') || lastError.includes('no credits') || lastError.includes('insufficient')) {
-          console.error('  → OpenAI API returned 429 (rate limit / no credits). Stopping retries.');
+        if (lastError.includes('429') || lastError.includes('no credits') || lastError.includes('insufficient') || lastError.includes('quota')) {
+          console.error('  → AI API returned 429 (rate limit / no credits). Stopping retries.');
           hitRateLimit = true;
           break;
         }
@@ -406,7 +394,7 @@ async function analyseWithRetry(
   }
 
   if (hitRateLimit) {
-    lastError = `OpenAI API error: 429 — rate limit or no credits remaining. ${lastError || ''}`;
+    lastError = `AI API error: 429 — rate limit or no credits remaining. ${lastError || ''}`;
   }
 
   console.error(`  → All AI analysis attempts failed. Using evidence-only fallback.`);
@@ -443,15 +431,15 @@ function validateBugAnalysis(
 }
 
 async function main() {
-  console.log('Analysing failures with OpenAI...');
+  console.log('Analysing failures with Gemini...');
 
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    console.error('OPENAI_API_KEY environment variable is not set.');
+    console.error('GEMINI_API_KEY environment variable is not set.');
     process.exit(1);
   }
 
-  const model = process.env.OPENAI_MODEL || 'gpt-5.6-luna';
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
   const failures = loadFailureData();
 

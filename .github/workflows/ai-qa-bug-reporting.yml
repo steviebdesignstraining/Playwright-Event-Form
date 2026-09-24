@@ -20,7 +20,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
 
@@ -287,10 +288,10 @@ jobs:
             exit 1
           fi
 
-      - name: Run OpenAI analysis
+      - name: Run Gemini AI analysis
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.6-luna' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
         run: |
           echo "========================================"
           echo "Running AI Feature Analysis"
@@ -298,16 +299,8 @@ jobs:
 
           npx tsx scripts/analyse-failure.ts
 
-      - name: Validate with Copilot
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-        run: |
-          echo "========================================"
-          echo "Validating AI-generated bug reports"
-          echo "========================================"
-
-          npx tsx scripts/validate-with-copilot.ts
+      - name: Validate bug analysis
+        run: npx tsx scripts/validate-with-copilot.ts
 
       - name: Verify analysis output
         id: analysis-status

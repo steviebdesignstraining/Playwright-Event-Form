@@ -98,6 +98,28 @@ function pushEnvSecret(secretName) {
   }
 }
 
+function pushEnvVar(varName) {
+  const sourceFile = join(projectRoot, '.env.local');
+  if (!existsSync(sourceFile)) {
+    console.error(`Error: .env.local not found`);
+    process.exit(1);
+  }
+
+  const vars = parseEnvFile(sourceFile);
+  if (!vars[varName]) {
+    console.error(`Error: ${varName} not found in .env.local`);
+    process.exit(1);
+  }
+
+  const repo = getRepo();
+  try {
+    runGh(`variable set "${varName}" --body "${vars[varName]}" --repo ${repo}`, { silent: true });
+    console.log(`  ✓ ${varName}`);
+  } catch {
+    console.error(`  ✗ ${varName} (failed)`);
+  }
+}
+
 function pushSecrets(env) {
   const sourceFile = join(venvDir, `.venv.${env}`);
   if (!existsSync(sourceFile)) {
@@ -240,14 +262,16 @@ Sync Local Secrets/Variables to GitHub
 Usage: node scripts/sync-github-secrets.mjs <command> [options]
 
 Commands:
-  push-secrets <env>    Push secrets from .venv/.venv.<env> to GitHub secrets
-  push-vars <env>       Push variables from .venv/.venv.<env> to GitHub variables
-  push-all <env>        Push both secrets and variables
-  list-secrets          List GitHub repository secrets
-  list-vars             List GitHub repository variables
-  delete-secret <name>  Delete a GitHub secret
-  delete-var <name>     Delete a GitHub variable
-  list-envs             List available local venv environments
+   push-secrets <env>    Push secrets from .venv/.venv.<env> to GitHub secrets
+   push-vars <env>       Push variables from .venv/.venv.<env> to GitHub variables
+   push-all <env>        Push both secrets and variables
+   list-secrets          List GitHub repository secrets
+   list-vars             List GitHub repository variables
+   delete-secret <name>  Delete a GitHub secret
+   delete-var <name>     Delete a GitHub variable
+   list-envs             List available local venv environments
+   push-env-secret <name>        Push a single secret from .env.local to GitHub secrets
+   push-env-var <name>           Push a single variable from .env.local to GitHub variables
 
 Prerequisites:
   - GitHub CLI (gh) installed: https://cli.github.com/
@@ -258,7 +282,8 @@ Examples:
   node scripts/sync-github-secrets.mjs push-all local
   node scripts/sync-github-secrets.mjs push-secrets staging
   node scripts/sync-github-secrets.mjs push-vars production
-  node scripts/sync-github-secrets.mjs push-env-secret OPENAI_API_KEY
+  node scripts/sync-github-secrets.mjs push-env-secret GEMINI_API_KEY
+  node scripts/sync-github-secrets.mjs push-env-var GEMINI_MODEL
   node scripts/sync-github-secrets.mjs list-secrets
   node scripts/sync-github-secrets.mjs list-vars
   node scripts/sync-github-secrets.mjs delete-secret OLD_API_KEY
@@ -307,6 +332,10 @@ switch (command) {
   case 'push-env-secret':
     if (!arg1) { console.error('Error: secret name required'); process.exit(1); }
     pushEnvSecret(arg1);
+    break;
+  case 'push-env-var':
+    if (!arg1) { console.error('Error: variable name required'); process.exit(1); }
+    pushEnvVar(arg1);
     break;
   default:
     showHelp();

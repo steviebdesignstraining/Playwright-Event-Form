@@ -8,10 +8,9 @@ const rootDir = join(__dirname, '..');
 interface ValidationInfo {
   valid: boolean;
   issues: string[];
-  classification: string;
-  skipped: boolean;
-  status: 'VALID' | 'INVALID' | 'SKIPPED' | 'ERROR';
+  status: 'VALID' | 'INVALID' | 'ERROR' | 'SKIPPED';
   error?: string;
+  skipped?: boolean;
 }
 
 interface ValidatedBug {
@@ -62,12 +61,7 @@ function main() {
       continue;
     }
 
-    if (validationStatus === 'ERROR') {
-      validationErrors.push(item);
-      continue;
-    }
-
-    if (validationStatus === 'SKIPPED') {
+    if (validationStatus === 'ERROR' || validationStatus === 'SKIPPED') {
       validationErrors.push(item);
       continue;
     }
@@ -75,10 +69,8 @@ function main() {
     if (classification === 'PRODUCT_BUG') {
       if (validationStatus === 'VALID' && item.validation?.valid) {
         bugs.push(item);
-      } else if (validationStatus === 'INVALID') {
-        nonBugs.push(item);
       } else {
-        unknown.push(item);
+        nonBugs.push(item);
       }
     } else if (classification === 'UNKNOWN') {
       unknown.push(item);
@@ -109,35 +101,30 @@ function main() {
   console.log('========================================');
 
   if (aiFallback.length > 0) {
-    console.error('');
-    console.error(`ERROR: ${aiFallback.length} records used AI fallback (AI analysis was unavailable).`);
+    console.error(`ERROR: ${aiFallback.length} records used AI fallback (AI was unavailable).`);
     for (const item of aiFallback) {
       console.error(`  FALLBACK: ${item.title} — ${item.aiError ?? 'AI unavailable'}`);
     }
-    console.error('');
-    console.error('AI analysis must succeed for issues to be created. Fix OPENAI_API_KEY / credits and re-run.');
+    console.error('AI analysis must succeed for issues to be created. Fix GEMINI_API_KEY / credits and re-run.');
     process.exit(1);
   }
 
   if (validationErrors.length > 0) {
-    console.error('');
-    console.error(`ERROR: ${validationErrors.length} records could not be validated (Copilot validation unavailable).`);
+    console.error(`ERROR: ${validationErrors.length} records could not be validated.`);
     for (const item of validationErrors) {
-      console.error(`  UNVALIDATED: ${item.title} — ${item.validation?.error ?? 'Validation skipped'}`);
+      const reason = item.validation?.error || item.validation?.issues?.join(', ') || 'Validation unavailable';
+      console.error(`  UNVALIDATED: ${item.title} — ${reason}`);
     }
-    console.error('');
-    console.error('Copilot validation must succeed for issues to be created. Check COPILOT_GITHUB_TOKEN and endpoint.');
+    console.error('Deterministic validation must succeed for issues to be created.');
     process.exit(1);
   }
 
   if (unknown.length > 0) {
-    console.error('');
     console.error(`ERROR: ${unknown.length} validation records have UNKNOWN classification.`);
     for (const item of unknown) {
       console.error(`  UNKNOWN: ${item.title}`);
     }
-    console.error('');
-    console.error('Check validate-with-copilot.ts and validated-bug.json schema.');
+    console.error('Check analyse-failure.ts and validated-bug.json schema.');
     process.exit(1);
   }
 

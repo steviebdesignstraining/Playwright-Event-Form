@@ -21,6 +21,13 @@ interface BugAnalysis {
   branch?: string;
   commit?: string;
   project?: string;
+  validation?: {
+    valid: boolean;
+    issues: string[];
+    status: 'VALID' | 'INVALID' | 'ERROR' | 'SKIPPED';
+    error?: string;
+    skipped?: boolean;
+  };
 }
 
 interface CreatedIssue {
@@ -63,7 +70,7 @@ function getWorkflowRunInfo(): { workflowRunUrl: string } {
   return { workflowRunUrl };
 }
 
-function loadValidatedBugs(): Array<BugAnalysis & { validation?: { valid: boolean; issues: string[]; classification: string; skipped: boolean; correctedBug?: BugAnalysis } }> {
+function loadValidatedBugs(): BugAnalysis[] {
   const path = join(rootDir, 'validated-bug.json');
   if (!existsSync(path)) {
     console.error('No validated-bug.json found. Run validate-with-copilot.ts first.');
@@ -199,10 +206,16 @@ async function main() {
       continue;
     }
 
-    const valid = bug.validation?.valid ?? true;
-    if (bug.fallbackUsed || !valid) {
-      console.log(`  Skipping "${bug.title}" — AI analysis fallback used or validation failed. Classification may be unreliable.`);
-      skippedIssues.push({ bug, reason: 'AI fallback or validation failure' });
+    if (bug.fallbackUsed || !bug.aiAnalysisSucceeded) {
+      console.log(`  Skipping "${bug.title}" — AI analysis fallback used. Classification unreliable.`);
+      skippedIssues.push({ bug, reason: 'AI fallback used' });
+      continue;
+    }
+
+    const validationStatus = bug.validation?.status || 'ERROR';
+    if (validationStatus !== 'VALID') {
+      console.log(`  Skipping "${bug.title}" — validation status: ${validationStatus}`);
+      skippedIssues.push({ bug, reason: `Validation ${validationStatus}` });
       continue;
     }
 
