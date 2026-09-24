@@ -100,13 +100,18 @@ function main() {
 
   console.log('========================================');
 
+  // Records without a reliable AI classification are never turned into issues, but that is an
+  // external outage (Gemini overloaded / quota), not a reason to fail the whole pipeline.
   if (aiFallback.length > 0) {
-    console.error(`ERROR: ${aiFallback.length} records used AI fallback (AI was unavailable).`);
+    console.warn(`WARNING: ${aiFallback.length} records used AI fallback (AI was unavailable) and will NOT get GitHub issues.`);
     for (const item of aiFallback) {
-      console.error(`  FALLBACK: ${item.title} — ${item.aiError ?? 'AI unavailable'}`);
+      console.warn(`  FALLBACK: ${item.title} — ${item.aiError ?? 'AI unavailable'}`);
     }
-    console.error('AI analysis must succeed for issues to be created. Fix GEMINI_API_KEY / credits and re-run.');
-    process.exit(1);
+    console.warn('Re-run the workflow once Gemini is available (or fix GEMINI_API_KEY / quota) to have these analysed.');
+
+    if (process.env.GITHUB_ACTIONS) {
+      console.log(`::warning title=Issue creation skipped for ${aiFallback.length} failure(s)::Gemini analysis was unavailable, so no GitHub issues were created for them.`);
+    }
   }
 
   if (validationErrors.length > 0) {

@@ -5,10 +5,25 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
+function githubAnnotation(level: 'notice' | 'warning' | 'error', title: string, message: string): void {
+  if (!process.env.GITHUB_ACTIONS) return;
+  const escape = (s: string) => s.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  console.log(`::${level} title=${escape(title)}::${escape(message)}`);
+}
+
+function writeOutput(name: string, value: string): void {
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+  }
+}
+
 function classifyAiError(error: string): string {
   const lower = error.toLowerCase();
+  // aiError strings written by analyse-failure.ts look like "... HTTP 503 UNAVAILABLE: ..."
+  const status = error.match(/HTTP (\d{3})/)?.[1] ?? '';
 
-  if (['400', '401', '403'].some(c => error.includes(c)) ||
+  if (['400', '401', '403'].includes(status) ||
+      lower.includes('api_key_invalid') ||
       lower.includes('invalid auth') ||
       lower.includes('invalid key') ||
       lower.includes('unauthorized') ||
@@ -17,17 +32,18 @@ function classifyAiError(error: string): string {
     return 'AUTHENTICATION_FAILURE';
   }
 
-  if (lower.includes('429') ||
+  if (lower.includes('daily_quota') ||
+      status === '429' ||
       lower.includes('quota') ||
       lower.includes('rate limit')) {
     return 'QUOTA_EXHAUSTED';
   }
 
-  if (lower.includes('503') ||
+  if (['500', '502', '503', '504'].includes(status) ||
       lower.includes('service_unavailable') ||
       lower.includes('unavailable') ||
-      lower.includes('500') ||
-      lower.includes('internal server error')) {
+      lower.includes('internal server error') ||
+      lower.includes('timeout')) {
     return 'SERVICE_UNAVAILABLE';
   }
 
@@ -36,6 +52,26 @@ function classifyAiError(error: string): string {
   }
 
   return 'UNKNOWN_ERROR';
+}
+
+function adviceFor(errorType: string): string {
+  switch (errorType) {
+    case 'AUTHENTICATION_FAILURE':
+      return 'GEMINI_API_KEY is invalid or lacks permissions. Create a new key at https://aistudio.google.com/apikey and update the repository secret.';
+    case 'QUOTA_EXHAUSTED':
+    case 'NO_CREDITS':
+      return 'Gemini quota is exhausted (free tier is limited per model per day). Wait for the daily reset, enable billing, or add more models to the GEMINI_FALLBACK_MODEL repository variable (comma-separated).';
+    case 'SERVICE_UNAVAILABLE':
+      return 'Gemini was overloaded (HTTP 503) for the whole retry window. Re-run the workflow later, or add more models to the GEMINI_FALLBACK_MODEL repository variable (comma-separated).';
+    default:
+      return 'Gemini returned an unexpected error. Check the error detail above and re-run the workflow.';
+  }
+}
+
+function writeStepSummary(markdown: string): void {
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown + '\n');
+  }
 }
 
 function main() {
@@ -52,10 +88,6 @@ function main() {
     process.exit(1);
   }
 
-  if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, 'complete=true\n');
-  }
-
   const analysis = JSON.parse(readFileSync(analysisPath, 'utf-8'));
   const validated = JSON.parse(readFileSync(validatedPath, 'utf-8'));
 
@@ -68,14 +100,11 @@ function main() {
   let validationValid = 0;
   let validationInvalid = 0;
   let firstAiError = '';
-  let firstAiErrorType = '';
-  let fallbackUsed = false;
 
   for (const entry of analyses) {
     const a = entry.analysis;
     if (a?.fallbackUsed || a?.aiAnalysisSucceeded === false) {
       aiFailed++;
-      fallbackUsed = true;
       if (!firstAiError && (a?.aiError || a?.error)) {
         firstAiError = a.aiError || a.error || '';
       }
@@ -84,10 +113,16 @@ function main() {
     }
   }
 
+  // Records produced by the evidence-only fallback are expected to be INVALID; they must not
+  // count against the validation health of records the AI actually analysed.
+  let aiRecordsValid = 0;
   for (const item of records) {
     const status = item.validation?.status || 'ERROR';
+    const isFallback = item.fallbackUsed || item.aiAnalysisSucceeded === false;
+
     if (status === 'VALID') {
       validationValid++;
+      if (!isFallback) aiRecordsValid++;
     } else if (status === 'INVALID') {
       validationInvalid++;
     } else {
@@ -105,39 +140,43 @@ function main() {
   console.log(`Validation: VALID=${validationValid}, INVALID=${validationInvalid}, ERROR=${validationErrored}`);
   console.log('========================================');
 
-  if (aiFailed > 0) {
-    firstAiErrorType = classifyAiError(firstAiError);
+  const aiDegraded = aiFailed > 0;
+  writeOutput('ai_degraded', aiDegraded ? 'true' : 'false');
 
-    console.error('========================================');
-    console.error('AI SERVICE STATUS: UNAVAILABLE');
-    console.error('========================================');
-    console.error(`Error type: ${firstAiErrorType}`);
-    console.error(`Error detail: ${firstAiError}`);
-    console.error('');
+  // A Gemini outage is an external condition, not a defect in this repository: report it loudly
+  // (log, annotation, job summary) but let the pipeline finish. Issues are never created from
+  // fallback records (see check-validated-bugs.ts / create-github-issue.ts).
+  if (aiDegraded) {
+    const errorType = classifyAiError(firstAiError);
+    const advice = adviceFor(errorType);
 
-    if (firstAiErrorType === 'AUTHENTICATION_FAILURE') {
-      console.error('The GEMINI_API_KEY is invalid or lacks permissions.');
-      console.error('Fix: Create a new authorization key at https://aistudio.google.com/apikey');
-    } else if (firstAiErrorType === 'QUOTA_EXHAUSTED' || firstAiErrorType === 'NO_CREDITS') {
-      console.error('The Gemini API quota has been exhausted.');
-      console.error('Fix: Wait for quota reset or upgrade to paid tier at https://aistudio.google.com');
-    } else if (firstAiErrorType === 'SERVICE_UNAVAILABLE') {
-      console.error('Gemini generation service is temporarily unavailable (HTTP 503).');
-      console.error('Fix: Re-run the workflow. The service should recover automatically.');
-    } else {
-      console.error('Gemini API encountered an unexpected error.');
-      console.error('Fix: Check the error message and retry the workflow.');
-    }
+    console.warn('========================================');
+    console.warn('AI SERVICE STATUS: DEGRADED');
+    console.warn('========================================');
+    console.warn(`Error type: ${errorType}`);
+    console.warn(`Error detail: ${firstAiError}`);
+    console.warn(`Records without AI analysis: ${aiFailed} of ${analyses.length}`);
+    console.warn(`Advice: ${advice}`);
+    console.warn('No GitHub issues will be created for records without AI analysis.');
+    console.warn('========================================');
 
-    console.error('');
-    if (firstAiErrorType === 'SERVICE_UNAVAILABLE') {
-      console.error('Generation request failed due to service unavailability.');
-    } else {
-      console.error('The API key was verified during authentication, but the');
-      console.error('generation request failed. No GitHub issues will be created.');
-    }
-    console.error('STATUS: FAILED');
-    process.exit(1);
+    githubAnnotation(
+      'warning',
+      `Gemini analysis unavailable for ${aiFailed}/${analyses.length} failures (${errorType})`,
+      `${advice}\n${firstAiError}`
+    );
+
+    writeStepSummary([
+      '### ⚠️ AI analysis degraded',
+      '',
+      `${aiFailed} of ${analyses.length} failures could not be analysed by Gemini, so **no GitHub issues will be created for them**.`,
+      '',
+      `- **Error type:** ${errorType}`,
+      `- **Detail:** \`${firstAiError.replace(/`/g, "'")}\``,
+      `- **What to do:** ${advice}`,
+      '',
+      'The raw failure evidence is still available in the `playwright-evidence` and `ai-analysis` artifacts and in the Allure report.',
+    ].join('\n'));
   }
 
   if (validationErrored > 0) {
@@ -146,13 +185,14 @@ function main() {
     process.exit(1);
   }
 
-  if (validationValid === 0) {
-    console.error('WARNING: No records passed validation.');
+  if (aiSucceeded > 0 && aiRecordsValid === 0) {
+    console.error('WARNING: No AI-analysed records passed validation.');
     console.error('STATUS: FAILED');
     process.exit(1);
   }
 
-  console.log('STATUS: HEALTHY');
+  writeOutput('complete', 'true');
+  console.log(aiDegraded ? 'STATUS: DEGRADED (pipeline continues, AI unavailable)' : 'STATUS: HEALTHY');
 }
 
 main();

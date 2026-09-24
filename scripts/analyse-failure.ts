@@ -50,22 +50,51 @@ interface AnalysisEntry {
 class GeminiApiError extends Error {
   status: number;
   body: string;
+  retryAfterMs?: number;
 
-  constructor(status: number, body: string) {
+  constructor(status: number, body: string, retryAfterMs?: number) {
     super(`Gemini API error (${status}): ${body}`);
     this.name = 'GeminiApiError';
     this.status = status;
     this.body = body;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/** Gemini answered HTTP 200 but the payload was unusable (empty, truncated, not JSON, wrong shape). */
+class GeminiOutputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GeminiOutputError';
   }
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
+function envNumber(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return process.env[name] !== undefined && process.env[name] !== '' && Number.isFinite(parsed) ? parsed : fallback;
+}
+
 const PRIMARY_MODEL = 'gemini-3.8-flash';
-const FALLBACK_MODEL = 'gemini-3.7-flash';
-const MAX_ATTEMPTS = 5;
-const RETRY_DELAYS_MS = [5000, 15000, 30000, 60000];
+// GEMINI_FALLBACK_MODEL may be a comma-separated list, tried in order after the primary model.
+// Free-tier quota is tracked per model, so every extra model is an extra daily allowance.
+const DEFAULT_FALLBACK_MODELS = ['gemini-3.7-flash'];
+
+const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai';
+
+// Retry policy. Prefer waiting over hammering: free-tier quota is only ~20 requests/day/model, so an
+// outage must not burn it. Worst case with two models: 3 rounds x 2 models x 2 attempts = 12 requests
+// (at most 6 per model), spread over a few minutes and capped by RETRY_BUDGET_MS. A healthy run uses 1.
+const ATTEMPTS_PER_MODEL = 2;
+const MAX_ROUNDS = 3;
+const RETRY_BASE_MS = envNumber('GEMINI_RETRY_BASE_MS', 5000);
+const MAX_BACKOFF_MS = RETRY_BASE_MS * 12;
+const RETRY_BUDGET_MS = envNumber('GEMINI_RETRY_BUDGET_MS', 10 * 60 * 1000);
+const REQUEST_TIMEOUT_MS = envNumber('GEMINI_REQUEST_TIMEOUT_MS', 120_000);
+const MAX_OUTPUT_TOKENS = 8192;
+
 
 const BUG_ANALYSIS_SCHEMA = {
   type: 'object' as const,
@@ -165,82 +194,122 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function getHttpStatus(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) {
-    return undefined;
+function githubAnnotation(level: 'notice' | 'warning' | 'error', title: string, message: string): void {
+  if (!process.env.GITHUB_ACTIONS) return;
+  const escape = (s: string) => s.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  console.log(`::${level} title=${escape(title)}::${escape(message)}`);
+}
+
+type ErrorKind =
+  | 'auth'              // bad/forbidden API key: retrying can never help
+  | 'daily_quota'       // per-day quota for this model is used up: skip the model for this run
+  | 'model_unavailable' // model name unknown / rejected: skip the model for this run
+  | 'rate_limited'      // per-minute limit: wait for the server-provided delay and retry
+  | 'transient'         // 5xx, timeouts, network errors, unusable output: back off and retry
+  | 'fatal';            // anything else (programming error): do not keep hammering the API
+
+interface ClassifiedError {
+  kind: ErrorKind;
+  retryAfterMs?: number;
+}
+
+function parseRetryDelayMs(body: string): number | undefined {
+  const match = body.match(/"retryDelay":\s*"([\d.]+)s"/) ?? body.match(/retry in ([\d.]+)s/i);
+  return match ? Math.ceil(parseFloat(match[1]) * 1000) : undefined;
+}
+
+function parseRetryAfterHeader(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) ? Math.ceil(seconds * 1000) : undefined;
+}
+
+function classifyError(error: unknown): ClassifiedError {
+  if (error instanceof GeminiApiError) {
+    const { status, body } = error;
+
+    if (status === 401 || status === 403 || /API_KEY_INVALID|API key not valid/i.test(body)) {
+      return { kind: 'auth' };
+    }
+    if (status === 400 || status === 404) {
+      return { kind: 'model_unavailable' };
+    }
+    if (status === 429) {
+      // The free tier reports RPD (per-day) exhaustion with a misleading short retryDelay,
+      // so the quota id decides whether waiting is pointless.
+      if (/PerDay|per day/i.test(body)) {
+        return { kind: 'daily_quota' };
+      }
+      return { kind: 'rate_limited', retryAfterMs: error.retryAfterMs ?? parseRetryDelayMs(body) };
+    }
+    if (status === 408 || status >= 500) {
+      return { kind: 'transient', retryAfterMs: error.retryAfterMs };
+    }
+    return { kind: 'fatal' };
   }
 
-  const candidate = error as {
-    status?: number;
-    response?: { status?: number };
-  };
-
-  return candidate.status ?? candidate.response?.status;
-}
-
-function isRetryableGeminiError(error: unknown): boolean {
-  const status = getHttpStatus(error);
-  return status === 429 || status === 500 || status === 503;
-}
-
-function isDailyQuotaExceeded(error: unknown): boolean {
-  if (!(error instanceof GeminiApiError)) {
-    return false;
+  if (error instanceof GeminiOutputError) {
+    return { kind: 'transient' };
   }
 
-  return (
-    error.status === 429 &&
-    /quota exceeded|daily quota|free_tier/i.test(error.body)
-  );
+  // fetch() rejects with TypeError on network failures; AbortSignal.timeout() raises TimeoutError.
+  const name = error instanceof Error ? error.name : '';
+  if (name === 'TypeError' || name === 'TimeoutError' || name === 'AbortError') {
+    return { kind: 'transient' };
+  }
+
+  return { kind: 'fatal' };
 }
 
-async function callGeminiWithRetry<T>(
-  operation: () => Promise<T>,
-  model: string
-): Promise<T> {
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+/** One-line, human-readable error text (the raw Gemini body is a multi-line JSON blob). */
+function describeError(error: unknown): string {
+  if (error instanceof GeminiApiError) {
+    let detail = error.body;
     try {
-      console.log(`  Attempt ${attempt}/${MAX_ATTEMPTS} with ${model}...`);
-      return await operation();
-    } catch (error) {
-      lastError = error;
-      const status = getHttpStatus(error);
-
-      console.warn(`    Attempt ${attempt} failed with HTTP ${status ?? 'unknown'}`);
-
-      if (error instanceof Error) {
-        console.warn(`    ${error.message}`);
+      const parsed = JSON.parse(error.body);
+      const apiError = Array.isArray(parsed) ? parsed[0]?.error : parsed?.error;
+      if (apiError) {
+        detail = `${apiError.status ?? ''}: ${apiError.message ?? ''}`.trim();
       }
+    } catch {
+      // body was not JSON; use it as-is
+    }
+    return `HTTP ${error.status} ${detail.split('\n')[0]}`.slice(0, 300);
+  }
 
-      if (isDailyQuotaExceeded(error)) {
-        console.error('  → Gemini daily/free-tier quota exhausted. Not retrying.');
-        throw error;
-      }
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return text.split('\n')[0].slice(0, 300);
+}
 
-      if (!isRetryableGeminiError(error)) {
-        console.error('  → Error is not retryable (auth or bad request).');
-        throw error;
-      }
+function extractAnalysisArray(aiResponse: string): BugAnalysis[] {
+  let parsed: unknown;
 
-      if (attempt === MAX_ATTEMPTS) {
-        console.error('  → Maximum Gemini retry attempts reached.');
-        break;
-      }
-
-      const baseDelay = RETRY_DELAYS_MS[attempt - 1] ?? 60000;
-      const jitter = Math.floor(Math.random() * 2000);
-      const delay = baseDelay + jitter;
-
-      console.log(`    Gemini returned HTTP ${status}. Waiting ${Math.round(delay / 1000)}s before retry...`);
-      await sleep(delay);
+  try {
+    parsed = JSON.parse(aiResponse);
+  } catch {
+    const cleaned = aiResponse.trim();
+    const firstBracket = cleaned.indexOf('[');
+    const lastBracket = cleaned.lastIndexOf(']');
+    if (firstBracket === -1 || lastBracket === -1) {
+      throw new GeminiOutputError(`Failed to parse Gemini response as JSON: ${aiResponse.substring(0, 200)}`);
+    }
+    try {
+      parsed = JSON.parse(cleaned.substring(firstBracket, lastBracket + 1));
+    } catch {
+      throw new GeminiOutputError(`Failed to parse Gemini response as JSON: ${aiResponse.substring(0, 200)}`);
     }
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(`Gemini analysis failed after ${MAX_ATTEMPTS} attempts`);
+  // Some models wrap the array in an object ({"analyses": [...]}); accept that too.
+  if (!Array.isArray(parsed) && parsed && typeof parsed === 'object') {
+    parsed = Object.values(parsed as Record<string, unknown>).find(Array.isArray);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new GeminiOutputError('Gemini response was JSON but not an array of analyses');
+  }
+
+  return parsed as BugAnalysis[];
 }
 
 async function callGemini(
@@ -249,12 +318,13 @@ async function callGemini(
   systemPrompt: string,
   evidence: string
 ): Promise<BugAnalysis[]> {
-  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+  const response = await fetch(`${GEMINI_BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     body: JSON.stringify({
       model,
       messages: [
@@ -262,7 +332,7 @@ async function callGemini(
         { role: 'user', content: evidence },
       ],
       temperature: 0.1,
-      max_tokens: 2048,
+      max_tokens: MAX_OUTPUT_TOKENS,
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -277,37 +347,37 @@ async function callGemini(
   const responseText = await response.text();
 
   if (!response.ok) {
-    throw new GeminiApiError(response.status, responseText);
+    throw new GeminiApiError(response.status, responseText, parseRetryAfterHeader(response.headers.get('retry-after')));
   }
 
-  const body = JSON.parse(responseText) as {
-    choices?: Array<{ message: { content: string } }>;
-    error?: { message: string };
+  let body: {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+    error?: { message?: string };
   };
+  try {
+    body = JSON.parse(responseText);
+  } catch {
+    throw new GeminiOutputError(`Gemini returned a non-JSON body: ${responseText.substring(0, 200)}`);
+  }
 
   if (body.error) {
-    throw new Error(`Gemini API error: ${body.error.message}`);
+    throw new GeminiOutputError(`Gemini reported an error in a 200 response: ${body.error.message ?? 'unknown'}`);
   }
 
-  const aiResponse = body.choices?.[0]?.message?.content || '';
+  const choice = body.choices?.[0];
+  const aiResponse = choice?.message?.content || '';
 
   if (!aiResponse) {
-    throw new Error('Gemini API returned no content');
+    throw new GeminiOutputError('Gemini API returned no content');
   }
 
-  try {
-    return JSON.parse(aiResponse) as BugAnalysis[];
-  } catch {
-    const cleaned = aiResponse.trim();
-    const firstBracket = cleaned.indexOf('[');
-    const lastBracket = cleaned.lastIndexOf(']');
-    if (firstBracket !== -1 && lastBracket !== -1) {
-      const extracted = cleaned.substring(firstBracket, lastBracket + 1);
-      return JSON.parse(extracted) as BugAnalysis[];
-    }
-    throw new Error(`Failed to parse Gemini response as JSON: ${aiResponse.substring(0, 200)}`);
+  if (choice?.finish_reason === 'length') {
+    throw new GeminiOutputError('Gemini output was truncated (finish_reason=length)');
   }
+
+  return extractAnalysisArray(aiResponse);
 }
+
 
 function buildEvidence(failures: FailureData[]): string {
   const testCodeSamples = new Map<string, string>();
@@ -391,43 +461,100 @@ function createIndividualFallback(failure: FailureData, aiError?: string): BugAn
   };
 }
 
-async function analyseWithRetry(
+function resolveModelChain(): string[] {
+  const primary = process.env.GEMINI_MODEL || PRIMARY_MODEL;
+  const fallbacks = (process.env.GEMINI_FALLBACK_MODEL || DEFAULT_FALLBACK_MODELS.join(','))
+    .split(',')
+    .map(m => m.trim())
+    .filter(Boolean);
+  return [...new Set([primary, ...fallbacks])];
+}
+
+/**
+ * Sends the batch to Gemini, moving through the model chain until one succeeds.
+ *
+ *  - transient errors (503/500/timeouts/bad output) -> exponential backoff, then next model
+ *  - per-minute 429                                 -> wait the server-provided delay
+ *  - per-day 429 / unknown model                    -> skip that model immediately (waiting cannot help)
+ *  - auth errors                                    -> stop immediately
+ *
+ * If every model fails the chain is retried after a longer pause, until RETRY_BUDGET_MS is spent.
+ * Throws only after all of that; the caller turns the error into evidence-only fallback records.
+ */
+async function analyseWithResilience(
   failures: FailureData[],
   apiKey: string,
-  model: string,
-  fallbackModel?: string
+  models: string[]
 ): Promise<BugAnalysis[]> {
   const evidence = buildEvidence(failures);
-
+  const deadline = Date.now() + RETRY_BUDGET_MS;
+  const skipped = new Map<string, ErrorKind>();
   let lastError: unknown;
 
-  try {
-    return await callGeminiWithRetry(() => callGemini(apiKey, model, SYSTEM_PROMPT, evidence), model);
-  } catch (error) {
-    lastError = error;
-    const status = getHttpStatus(error);
+  console.log(`Model chain: ${models.join(' -> ')}`);
 
-    if (isDailyQuotaExceeded(error) || !isRetryableGeminiError(error)) {
-      console.error('  → Non-retryable error. Not trying fallback model.');
-      throw error;
+  rounds:
+  for (let round = 1; round <= MAX_ROUNDS; round++) {
+    const candidates = models.filter(m => !skipped.has(m));
+    if (candidates.length === 0) break;
+
+    if (round > 1) {
+      const pause = RETRY_BASE_MS * 6 * (round - 1);
+      if (Date.now() + pause >= deadline) {
+        console.warn('  → Retry budget exhausted. Giving up.');
+        break;
+      }
+      console.log(`  Every available model failed in round ${round - 1}. Pausing ${Math.round(pause / 1000)}s before round ${round}/${MAX_ROUNDS}...`);
+      await sleep(pause);
     }
 
-    console.warn(`  → Primary model ${model} failed after retries.`);
+    for (const model of candidates) {
+      for (let attempt = 1; attempt <= ATTEMPTS_PER_MODEL; attempt++) {
+        console.log(`  [round ${round}/${MAX_ROUNDS}] ${model} attempt ${attempt}/${ATTEMPTS_PER_MODEL}...`);
 
-    if (fallbackModel && fallbackModel !== model && isRetryableGeminiError(error)) {
-      console.log(`  → Trying fallback model: ${fallbackModel} (only for transient errors)`);
-      try {
-        return await callGeminiWithRetry(() => callGemini(apiKey, fallbackModel, SYSTEM_PROMPT, evidence), fallbackModel);
-      } catch (fallbackError) {
-        lastError = fallbackError;
-        console.warn(`  → Fallback model ${fallbackModel} also failed.`);
+        try {
+          const analyses = await callGemini(apiKey, model, SYSTEM_PROMPT, evidence);
+          console.log(`  ✓ Analysis succeeded with ${model}`);
+          return analyses;
+        } catch (error) {
+          lastError = error;
+          const { kind, retryAfterMs } = classifyError(error);
+          console.warn(`    ✗ ${describeError(error)} [${kind}]`);
+
+          if (kind === 'auth' || kind === 'fatal') {
+            console.error('  → Error cannot be fixed by retrying. Stopping.');
+            break rounds;
+          }
+
+          if (kind === 'daily_quota' || kind === 'model_unavailable') {
+            console.warn(`  → ${model} is unusable for this run (${kind}). Moving to the next model.`);
+            skipped.set(model, kind);
+            break;
+          }
+
+          if (attempt === ATTEMPTS_PER_MODEL) {
+            console.warn(`  → ${model} still failing after ${ATTEMPTS_PER_MODEL} attempts. Moving to the next model.`);
+            break;
+          }
+
+          const backoff = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), MAX_BACKOFF_MS);
+          const jitter = Math.floor(Math.random() * Math.min(1000, RETRY_BASE_MS));
+          const delay = Math.min((retryAfterMs ?? backoff) + jitter, MAX_BACKOFF_MS * 1.5);
+
+          if (Date.now() + delay >= deadline) {
+            console.warn('  → Retry budget exhausted. Giving up.');
+            break rounds;
+          }
+
+          console.log(`    Retrying ${model} in ${Math.round(delay / 1000)}s...`);
+          await sleep(delay);
+        }
       }
     }
-
-    console.error('  → All Gemini analysis attempts failed.');
-    console.error(`  → Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
-    return failures.map(f => createIndividualFallback(f, lastError instanceof Error ? lastError.message : String(lastError)));
   }
+
+  const tried = models.map(m => (skipped.has(m) ? `${m} (${skipped.get(m)})` : m)).join(', ');
+  throw new Error(`All Gemini models failed [${tried}]. Last error: ${describeError(lastError)}`);
 }
 
 async function main() {
@@ -439,8 +566,7 @@ async function main() {
     process.exit(1);
   }
 
-  const model = process.env.GEMINI_MODEL || PRIMARY_MODEL;
-  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL || FALLBACK_MODEL;
+  const models = resolveModelChain();
 
   const failures = loadFailureData();
 
@@ -463,11 +589,23 @@ async function main() {
   console.log(`Failures available for AI analysis: ${uniqueFailures.length}`);
   console.log(`Sending batched request for all ${uniqueFailures.length} failures in a single API call.`);
 
-  const analyses = await analyseWithRetry(uniqueFailures, apiKey, model, fallbackModel);
+  let analyses: BugAnalysis[];
+  try {
+    analyses = await analyseWithResilience(uniqueFailures, apiKey, models);
+  } catch (error) {
+    // Never crash the job on a Gemini outage: record evidence-only fallbacks instead. The health
+    // check and issue-creation steps see fallbackUsed=true, skip issue creation and report why.
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error('  → Gemini analysis unavailable. Writing evidence-only fallback records so the pipeline can finish.');
+    console.error(`  → ${reason}`);
+    githubAnnotation('warning', 'Gemini analysis unavailable', reason);
+    analyses = uniqueFailures.map(f => createIndividualFallback(f, reason));
+  }
 
   if (analyses.length !== uniqueFailures.length) {
     console.warn(`  → Gemini returned ${analyses.length} analyses for ${uniqueFailures.length} failures. Using fallback for missing ones.`);
   }
+
 
   const entries: AnalysisEntry[] = uniqueFailures.map((failure, i) => {
     let analysis = analyses[i];
