@@ -33,7 +33,7 @@ function main() {
   let aiSucceeded = 0;
   let validationErrored = 0;
   let validationValid = 0;
-  let validationSkipped = 0;
+  let validationInvalid = 0;
 
   for (const entry of analyses) {
     const a = entry.analysis;
@@ -45,13 +45,13 @@ function main() {
   }
 
   for (const item of records) {
-    const status = item.validation?.status || 'UNKNOWN';
-    if (status === 'ERROR') {
-      validationErrored++;
-    } else if (status === 'SKIPPED') {
-      validationSkipped++;
-    } else if (status === 'VALID') {
+    const status = item.validation?.status || 'ERROR';
+    if (status === 'VALID') {
       validationValid++;
+    } else if (status === 'INVALID') {
+      validationInvalid++;
+    } else {
+      validationErrored++;
     }
   }
 
@@ -59,24 +59,33 @@ function main() {
   console.log('========================================');
   console.log('AI Analysis Health Check');
   console.log('========================================');
+  console.log(`Failures analysed: ${analyses.length}`);
   console.log(`AI analyses succeeded: ${aiSucceeded}`);
   console.log(`AI analyses failed (fallback): ${aiFailed}`);
-  console.log(`Validation: VALID=${validationValid}, ERROR=${validationErrored}, SKIPPED=${validationSkipped}`);
+  console.log(`Validation: VALID=${validationValid}, INVALID=${validationInvalid}, ERROR=${validationErrored}`);
   console.log('========================================');
 
   if (aiFailed > 0) {
-    console.error(`WARNING: ${aiFailed} analyses used fallback (AI was unavailable).`);
-    console.error('Issues will NOT be created for fallback analyses.');
+    console.error(`ERROR: ${aiFailed} analyses used fallback (AI was unavailable).`);
+    console.error('Gemini API key may be invalid or quota exceeded.');
+    console.error('Fix GEMINI_API_KEY and re-run.');
+    console.error('STATUS: FAILED');
+    process.exit(1);
   }
 
   if (validationErrored > 0) {
-    console.error(`WARNING: ${validationErrored} validations could not complete (service error).`);
-    console.error('Issues will NOT be created for unvalidated bugs.');
+    console.error(`ERROR: ${validationErrored} records have validation errors.`);
+    console.error('STATUS: FAILED');
+    process.exit(1);
   }
 
-  if (validationSkipped > 0) {
-    console.error(`WARNING: ${validationSkipped} validations were skipped.`);
+  if (validationValid === 0 && validationInvalid === 0) {
+    console.error('ERROR: No valid or invalid records found.');
+    console.error('STATUS: FAILED');
+    process.exit(1);
   }
+
+  console.log(`STATUS: HEALTHY`);
 }
 
 main();

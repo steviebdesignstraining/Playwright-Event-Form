@@ -42,55 +42,17 @@ interface BugAnalysis {
   project?: string;
 }
 
-type AnalysisEntry = {
+interface AnalysisEntry {
   failure: FailureData;
   analysis: BugAnalysis;
-};
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
-const GEMINI_MODELS = ['gemini-3.8-flash'];
-const MAX_RETRIES = 2;
-const RETRY_DELAY_MS = 2000;
-
-const AUTH_ERROR_PATTERNS = ['400', '401', '403', 'invalid auth', 'invalid key', 'unauthorized', 'forbidden', 'permission denied'];
-
-const BUG_ANALYSIS_SCHEMA = {
-  type: 'object' as const,
-  properties: {
-    title: { type: 'string', description: 'Specific title describing the affected functionality and observed failure' },
-    summary: { type: 'string', description: 'Brief summary of the defect' },
-    stepsToReproduce: { type: 'array', items: { type: 'string' }, description: 'Reproduction steps based on actual Playwright test actions' },
-    expectedResult: { type: 'string', description: 'What the test expected to happen' },
-    actualResult: { type: 'string', description: 'What actually happened (the failure)' },
-    failureType: { type: 'string', enum: ['UI', 'API', 'Data', 'Environment', 'Unknown'], description: 'Classification of failure by type' },
-    severity: { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'], description: 'Severity of the failure' },
-    priority: { type: 'string', enum: ['P1', 'P2', 'P3', 'P4'], description: 'Priority of the fix' },
-    classification: { type: 'string', enum: ['PRODUCT_BUG', 'TEST_DEFECT', 'TEST_INFRASTRUCTURE', 'UNKNOWN'], description: 'Whether this is a product bug, test defect, test infrastructure issue, or unknown' },
-    confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Confidence level 0.0-1.0' },
-    relevantEvidence: { type: 'array', items: { type: 'string' }, description: 'Relevant evidence references' },
-  },
-  required: ['title', 'summary', 'stepsToReproduce', 'expectedResult', 'actualResult', 'failureType', 'severity', 'priority', 'classification', 'confidence', 'relevantEvidence'],
-  additionalProperties: false,
-} as const;
-
-const SYSTEM_PROMPT = `You are an AI QA Defect Analysis Agent.
-
-Analyse the supplied Playwright test failure and convert the failure evidence into a structured software defect.
-
-PRODUCT_BUG = The application behaves incorrectly. A genuine software defect.
-TEST_DEFECT = The test expectation or implementation is wrong. The application may be working correctly.
-TEST_INFRASTRUCTURE = CI/test environment failure (browser crash, network timeout, environment unavailable).
-UNKNOWN = Insufficient evidence to classify confidently.
-
-Use ONLY the evidence provided. Do not invent application behaviour, reproduction steps, expected results, API responses, or environment information that is not present in the evidence.
-
-The bug title must describe the actual failure — not generic titles like "Playwright test failed" or "Automated test failure".
-
-Reproduction steps must be based on the actual Playwright test actions.
-
-Return valid JSON matching the provided schema.`;
+const GEMINI_MODEL = 'gemini-3.8-flash';
+const MAX_RETRIES = 1;
+const RETRY_DELAY_MS = 5000;
 
 function loadFailureData(): FailureData[] {
   const path = join(rootDir, 'failure-data.json');
@@ -144,12 +106,66 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function buildEvidence(failure: FailureData): string {
-  const testCode = loadTestFile(failure.testName);
+const FAILURE_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    title: { type: 'string', description: 'Specific title describing the affected functionality and observed failure' },
+    summary: { type: 'string', description: 'Brief summary of the defect' },
+    stepsToReproduce: { type: 'array', items: { type: 'string' }, description: 'Reproduction steps based on actual Playwright test actions' },
+    expectedResult: { type: 'string', description: 'What the test expected to happen' },
+    actualResult: { type: 'string', description: 'What actually happened (the failure)' },
+    failureType: { type: 'string', enum: ['UI', 'API', 'Data', 'Environment', 'Unknown'], description: 'Classification of failure by type' },
+    severity: { type: 'string', enum: ['Low', 'Medium', 'High', 'Critical'], description: 'Severity of the failure' },
+    priority: { type: 'string', enum: ['P1', 'P2', 'P3', 'P4'], description: 'Priority of the fix' },
+    classification: { type: 'string', enum: ['PRODUCT_BUG', 'TEST_DEFECT', 'TEST_INFRASTRUCTURE', 'UNKNOWN'], description: 'Whether this is a product bug, test defect, test infrastructure issue, or unknown' },
+    confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Confidence level 0.0-1.0' },
+    relevantEvidence: { type: 'array', items: { type: 'string' }, description: 'Relevant evidence references' },
+  },
+  required: ['title', 'summary', 'stepsToReproduce', 'expectedResult', 'actualResult', 'failureType', 'severity', 'priority', 'classification', 'confidence', 'relevantEvidence'],
+  additionalProperties: false,
+} as const;
+
+const BATCH_ANALYSIS_SCHEMA = {
+  type: 'array' as const,
+  items: FAILURE_SCHEMA,
+  minItems: 1,
+} as const;
+
+const SYSTEM_PROMPT = `You are an AI QA Defect Analysis Agent.
+
+Analyse the supplied Playwright test failures and convert each into a structured software defect.
+
+PRODUCT_BUG = The application behaves incorrectly. A genuine software defect.
+TEST_DEFECT = The test expectation or implementation is wrong. The application may be working correctly.
+TEST_INFRASTRUCTURE = CI/test environment failure (browser crash, network timeout, environment unavailable).
+UNKNOWN = Insufficient evidence to classify confidently.
+
+Use ONLY the evidence provided. Do not invent application behaviour, reproduction steps, expected results, API responses, or environment information that is not present in the evidence.
+
+The bug title must describe the actual failure — not generic titles like "Playwright test failed" or "Automated test failure".
+
+Reproduction steps must be based on the actual Playwright test actions.
+
+Return a JSON array of bug analysis objects, one per failure, matching the provided schema.`;
+
+function buildEvidence(failures: FailureData[]): string {
+  const testCodeSamples = new Map<string, string>();
   const pageObjects = loadPageObjects();
   const selectors = loadSelectors();
 
-  return `--- FAILURE EVIDENCE ---
+  for (const f of failures) {
+    if (!testCodeSamples.has(f.testName)) {
+      testCodeSamples.set(f.testName, loadTestFile(f.testName));
+    }
+  }
+
+  let codeSection = '';
+  for (const [name, code] of testCodeSamples) {
+    codeSection += `--- TEST: ${name} ---\n${code || 'Not found'}\n\n`;
+  }
+
+  const failuresSection = failures.map((failure, i) => {
+    return `FAILURE ${i + 1}:
 
 Test Name: ${failure.testName}
 Status: ${failure.status}
@@ -164,11 +180,21 @@ Branch: ${failure.branch}
 Commit: ${failure.commit}
 Timestamp: ${failure.timestamp}
 
---- REPRODUCTION STEPS ---
+Reproduction Steps:
 ${(failure.stepsToReproduce || []).join('\n')}
 
+Screenshot: ${failure.screenshot || 'none'}
+Trace: ${failure.trace || 'none'}
+Video: ${failure.video || 'none'}
+`;
+  }).join('\n\n');
+
+  return `--- FAILURE EVIDENCE (${failures.length} failures) ---
+
+${failuresSection}
+
 --- RELEVANT TEST CODE ---
-${testCode || 'Not found'}
+${codeSection}
 
 --- PAGE OBJECTS ---
 ${pageObjects || 'Not found'}
@@ -179,141 +205,7 @@ ${selectors || 'Not found'}
 --- END EVIDENCE ---`;
 }
 
-async function callGemini(
-  apiKey: string,
-  model: string,
-  systemPrompt: string,
-  evidence: string
-): Promise<BugAnalysis> {
-  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: evidence },
-      ],
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: 'bug_analysis',
-          strict: true,
-          schema: BUG_ANALYSIS_SCHEMA,
-        },
-      },
-    }),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'unknown');
-    let errorDetail = errorBody;
-
-    try {
-      const parsed = JSON.parse(errorBody);
-      errorDetail = parsed.error?.message || parsed.message || errorBody;
-    } catch {
-      // use raw error body
-    }
-
-    throw new Error(`Gemini API error (${response.status}): ${errorDetail}`);
-  }
-
-  const body = await response.json() as {
-    choices?: Array<{ message: { content: string } }>;
-    error?: { message: string };
-  };
-
-  if (body.error) {
-    throw new Error(`Gemini API error: ${body.error.message}`);
-  }
-
-  const aiResponse = body.choices?.[0]?.message?.content || '';
-
-  if (!aiResponse) {
-    throw new Error('Gemini API returned no content');
-  }
-
-  try {
-    return JSON.parse(aiResponse) as BugAnalysis;
-  } catch {
-    const cleaned = aiResponse.trim();
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      const extracted = cleaned.substring(firstBrace, lastBrace + 1);
-      return JSON.parse(extracted) as BugAnalysis;
-    }
-    throw new Error(`Failed to parse Gemini response as JSON: ${aiResponse.substring(0, 200)}`);
-  }
-}
-
-async function callGeminiFallback(
-  apiKey: string,
-  model: string,
-  systemPrompt: string,
-  evidence: string
-): Promise<BugAnalysis> {
-  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.1,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: evidence },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'unknown');
-    let errorDetail = errorBody;
-
-    try {
-      const parsed = JSON.parse(errorBody);
-      errorDetail = parsed.error?.message || errorBody;
-    } catch {
-      // use raw error body
-    }
-
-    throw new Error(`Gemini API error (${response.status}): ${errorDetail}`);
-  }
-
-  const body = await response.json() as {
-    choices?: Array<{ message: { content: string } }>;
-    error?: { message: string };
-  };
-
-  if (body.error) {
-    throw new Error(`Gemini API error: ${body.error.message}`);
-  }
-
-  const aiResponse = body.choices?.[0]?.message?.content || '{}';
-
-  try {
-    return JSON.parse(aiResponse) as BugAnalysis;
-  } catch {
-    const cleaned = aiResponse.trim();
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      const extracted = cleaned.substring(firstBrace, lastBrace + 1);
-      return JSON.parse(extracted) as BugAnalysis;
-    }
-    throw new Error(`Failed to parse Gemini response as JSON: ${aiResponse.substring(0, 200)}`);
-  }
-}
-
-function createEvidenceOnlyFallback(failure: FailureData, aiError?: string): BugAnalysis {
+function createIndividualFallback(failure: FailureData, aiError?: string): BugAnalysis {
   const title = `${failure.testName} — ${failure.project} project`;
 
   return {
@@ -338,106 +230,153 @@ function createEvidenceOnlyFallback(failure: FailureData, aiError?: string): Bug
   };
 }
 
-async function analyseWithRetry(
-  failure: FailureData,
+async function callGemini(
   apiKey: string,
-  model: string
-): Promise<BugAnalysis> {
-  const evidence = buildEvidence(failure);
-  const modelsToTry = [model, ...GEMINI_MODELS.filter(m => m !== model)];
-  const primaryModel = model;
+  model: string,
+  systemPrompt: string,
+  evidence: string
+): Promise<BugAnalysis[]> {
+  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: evidence },
+      ],
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'batch_analysis',
+          strict: true,
+          schema: BATCH_ANALYSIS_SCHEMA,
+        },
+      },
+    }),
+  });
 
-  let lastError: string | undefined;
-  let hitRateLimit = false;
-  let authFailed = false;
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => 'unknown');
+    let errorDetail = errorBody;
+    let retryDelay: string | undefined;
 
-  for (const tryModel of modelsToTry) {
-    if (hitRateLimit || authFailed) {
-      break;
-    }
-
-    const isFallbackModel = tryModel !== primaryModel;
-    if (isFallbackModel) {
-      console.log(`    Retrying with model: ${tryModel}`);
-    }
-
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        if (attempt > 1 && !isFallbackModel) {
-          console.log(`    Retry ${attempt}/${MAX_RETRIES}...`);
-          await sleep(RETRY_DELAY_MS * attempt);
-        }
-
-        let analysis: BugAnalysis;
-        try {
-          analysis = await callGemini(apiKey, tryModel, SYSTEM_PROMPT, evidence);
-        } catch {
-          analysis = await callGeminiFallback(apiKey, tryModel, SYSTEM_PROMPT, evidence);
-        }
-        return analysis;
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-        console.warn(`    Attempt ${attempt} with ${tryModel} failed: ${lastError}`);
-
-        const lowerErr = lastError.toLowerCase();
-        if (AUTH_ERROR_PATTERNS.some(p => lowerErr.includes(p.toLowerCase()))) {
-          console.error('  → AI API authentication failed. Stopping retries.');
-          authFailed = true;
-          break;
-        }
-
-        if (lastError.includes('429') || lastError.includes('no credits') || lastError.includes('insufficient') || lastError.includes('quota')) {
-          console.error('  → AI API returned 429 (rate limit / no credits). Stopping retries.');
-          hitRateLimit = true;
-          break;
-        }
-
-        if (attempt < MAX_RETRIES && !isFallbackModel) {
-          await sleep(RETRY_DELAY_MS * attempt);
+    try {
+      const parsed = JSON.parse(errorBody);
+      errorDetail = parsed.error?.message || parsed.message || errorBody;
+      const details = parsed.error?.details || [];
+      for (const d of details) {
+        if (d.metadata?.retryDelay) {
+          retryDelay = d.metadata.retryDelay;
         }
       }
+    } catch {
+      // use raw error body
+    }
 
-      if (hitRateLimit || authFailed) break;
+    const err = new Error(`Gemini API error (${response.status}): ${errorDetail}`);
+    if (retryDelay) {
+      (err as { retryDelay?: string }).retryDelay = retryDelay;
+    }
+    throw err;
+  }
+
+  const body = await response.json() as {
+    choices?: Array<{ message: { content: string } }>;
+    error?: { message: string };
+  };
+
+  if (body.error) {
+    throw new Error(`Gemini API error: ${body.error.message}`);
+  }
+
+  const aiResponse = body.choices?.[0]?.message?.content || '';
+
+  if (!aiResponse) {
+    throw new Error('Gemini API returned no content');
+  }
+
+  try {
+    return JSON.parse(aiResponse) as BugAnalysis[];
+  } catch {
+    const cleaned = aiResponse.trim();
+    const firstBrace = cleaned.indexOf('[');
+    const lastBracket = cleaned.lastIndexOf(']');
+    if (firstBrace !== -1 && lastBracket !== -1) {
+      const extracted = cleaned.substring(firstBrace, lastBracket + 1);
+      return JSON.parse(extracted) as BugAnalysis[];
+    }
+    throw new Error(`Failed to parse Gemini response as JSON: ${aiResponse.substring(0, 200)}`);
+  }
+}
+
+function parseRetryDelay(delay: string): number {
+  const match = delay.match(/(\d+)([smh]?)/);
+  if (!match) return 60000;
+  const num = parseInt(match[1], 10);
+  const unit = match[2] || 's';
+  switch (unit) {
+    case 's': return num * 1000;
+    case 'm': return num * 60 * 1000;
+    case 'h': return num * 3600 * 1000;
+    default: return num * 1000;
+  }
+}
+
+async function analyseWithRetry(
+  failures: FailureData[],
+  apiKey: string,
+  model: string
+): Promise<BugAnalysis[]> {
+  const evidence = buildEvidence(failures);
+
+  let lastError: string | undefined;
+  let retryDelayMs: number | undefined;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+    try {
+      console.log(`  Attempt ${attempt}/${MAX_RETRIES + 1} with ${model}...`);
+      const analyses = await callGemini(apiKey, model, SYSTEM_PROMPT, evidence);
+      return analyses;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      const errWithDelay = error as { retryDelay?: string };
+      retryDelayMs = errWithDelay.retryDelay ? parseRetryDelay(errWithDelay.retryDelay) : undefined;
+
+      console.warn(`    Attempt ${attempt} failed: ${lastError}`);
+
+      const lowerErr = lastError.toLowerCase();
+      const isAuthError = ['400', '401', '403'].some(c => lastError.includes(c)) ||
+        lowerErr.includes('invalid auth') ||
+        lowerErr.includes('invalid key') ||
+        lowerErr.includes('unauthorized') ||
+        lowerErr.includes('forbidden');
+
+      if (isAuthError) {
+        console.error('  → Gemini API authentication failed. Stopping retries.');
+        break;
+      }
+
+      const is429 = lowerErr.includes('429') || lowerErr.includes('quota') || lowerErr.includes('rate limit');
+
+      if (attempt <= MAX_RETRIES) {
+        let delay = RETRY_DELAY_MS * attempt;
+        if (is429 && retryDelayMs) {
+          delay = Math.max(retryDelayMs, RETRY_DELAY_MS * attempt);
+          console.log(`    Respecting server retry delay: ${retryDelayMs / 1000}s`);
+        }
+        console.log(`    Waiting ${delay / 1000}s before retry...`);
+        await sleep(delay);
+      }
     }
   }
 
-  if (authFailed) {
-    lastError = `Gemini API authentication error (400/401/403). The API key is invalid. ${lastError || ''}`;
-  } else if (hitRateLimit) {
-    lastError = `AI API error: 429 — rate limit or no credits remaining. ${lastError || ''}`;
-  }
-
-  console.error(`  → All AI analysis attempts failed. Using evidence-only fallback.`);
+  console.error('  → All Gemini analysis attempts failed.');
   console.error(`  → Last error: ${lastError}`);
-  return createEvidenceOnlyFallback(failure, lastError);
-}
-
-function validateBugAnalysis(
-  analysis: BugAnalysis,
-  failure: FailureData,
-  fallbackUsed = false,
-  aiError?: string
-): BugAnalysis {
-  return {
-    title: analysis.title || 'Untitled Bug',
-    summary: analysis.summary || '',
-    stepsToReproduce: analysis.stepsToReproduce || [],
-    expectedResult: analysis.expectedResult || '',
-    actualResult: analysis.actualResult || '',
-    failureType: analysis.failureType || 'Unknown',
-    severity: analysis.severity || 'Medium',
-    priority: analysis.priority || 'P3',
-    classification: analysis.classification || 'UNKNOWN',
-    confidence: typeof analysis.confidence === 'number' ? analysis.confidence : 0,
-    relevantEvidence: analysis.relevantEvidence || [],
-    aiAnalysisSucceeded: !fallbackUsed,
-    fallbackUsed,
-    aiError: aiError || analysis.aiError,
-    error: analysis.error,
-    branch: failure.branch,
-    commit: failure.commit,
-    project: failure.project,
-  };
+  return failures.map(f => createIndividualFallback(f, lastError));
 }
 
 async function main() {
@@ -449,9 +388,15 @@ async function main() {
     process.exit(1);
   }
 
-  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const model = process.env.GEMINI_MODEL || GEMINI_MODEL;
 
   const failures = loadFailureData();
+
+  if (failures.length === 0) {
+    console.log('No failures to analyse.');
+    writeFileSync(join(rootDir, 'bug-analysis.json'), '[]');
+    return;
+  }
 
   const uniqueFailures: FailureData[] = Array.from(
     new Map(
@@ -463,45 +408,54 @@ async function main() {
     console.log(`Deduplicated ${failures.length} failures to ${uniqueFailures.length} unique.`);
   }
 
-  if (uniqueFailures.length === 0) {
-    console.log('No failures to analyse.');
-  }
-
   console.log(`Failures available for AI analysis: ${uniqueFailures.length}`);
+  console.log(`Sending batched request for all ${uniqueFailures.length} failures in a single API call.`);
 
-  const analyses: AnalysisEntry[] = [];
+  const analyses = await analyseWithRetry(uniqueFailures, apiKey, model);
 
-  for (const failure of uniqueFailures) {
-    console.log(`\n  Analysing: ${failure.testName}`);
-
-    try {
-      const analysis = await analyseWithRetry(failure, apiKey, model);
-      const validated = validateBugAnalysis(analysis, failure, analysis.fallbackUsed, analysis.aiError);
-      analyses.push({ failure, analysis: validated });
-
-      console.log(`  → Title: ${validated.title}`);
-      console.log(`  → Classification: ${validated.classification}`);
-      console.log(`  → Confidence: ${validated.confidence}`);
-
-      if (validated.fallbackUsed) {
-        console.log(`  → AI Analysis: FAILED (using fallback)`);
-        console.log(`  → Error: ${validated.aiError}`);
-      } else {
-        console.log(`  → AI Analysis: SUCCESS`);
-      }
-
-      if (validated.error) {
-        console.log(`  → Warning: ${validated.error}`);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  → Unexpected error: ${message}`);
-
-      const fallback = createEvidenceOnlyFallback(failure, message);
-      const validated = validateBugAnalysis(fallback, failure, true, message);
-      analyses.push({ failure, analysis: validated });
-    }
+  if (analyses.length !== uniqueFailures.length) {
+    console.warn(`  → Gemini returned ${analyses.length} analyses for ${uniqueFailures.length} failures. Using fallback for missing ones.`);
   }
+
+  const entries: AnalysisEntry[] = uniqueFailures.map((failure, i) => {
+    let analysis = analyses[i];
+
+    if (!analysis) {
+      analysis = createIndividualFallback(failure, 'Missing analysis in batch response');
+    }
+
+    const fullAnalysis: BugAnalysis = {
+      title: analysis.title || `${failure.testName} — ${failure.project}`,
+      summary: analysis.summary || '',
+      stepsToReproduce: analysis.stepsToReproduce || [],
+      expectedResult: analysis.expectedResult || '',
+      actualResult: analysis.actualResult || '',
+      failureType: analysis.failureType || failure.failureType,
+      severity: analysis.severity || failure.severity,
+      priority: analysis.priority || failure.priority,
+      classification: analysis.classification || 'UNKNOWN',
+      confidence: typeof analysis.confidence === 'number' ? analysis.confidence : 0,
+      relevantEvidence: analysis.relevantEvidence || [],
+      aiAnalysisSucceeded: !analysis.fallbackUsed,
+      fallbackUsed: analysis.fallbackUsed || false,
+      aiError: analysis.aiError,
+      error: analysis.error,
+      branch: failure.branch,
+      commit: failure.commit,
+      project: failure.project,
+    };
+
+    if (fullAnalysis.fallbackUsed) {
+      console.log(`  → FALLBACK: ${fullAnalysis.title}`);
+      console.log(`  → Error: ${fullAnalysis.aiError}`);
+    } else {
+      console.log(`  → Title: ${fullAnalysis.title}`);
+      console.log(`  → Classification: ${fullAnalysis.classification}`);
+      console.log(`  → Confidence: ${fullAnalysis.confidence}`);
+    }
+
+    return { failure, analysis: fullAnalysis };
+  });
 
   const outputPath = join(rootDir, 'bug-analysis.json');
   const outputDir = dirname(outputPath);
@@ -509,8 +463,8 @@ async function main() {
     mkdirSync(outputDir, { recursive: true });
   }
 
-  writeFileSync(outputPath, JSON.stringify(analyses, null, 2));
-  console.log(`\nAI analyses: ${analyses.length}`);
+  writeFileSync(outputPath, JSON.stringify(entries, null, 2));
+  console.log(`\nAI analyses: ${entries.length}`);
   console.log(`Analysis written to: ${outputPath}`);
 }
 

@@ -329,7 +329,7 @@ jobs:
           npx tsx scripts/analyse-failure.ts
 
       - name: Validate bug analysis
-        run: npx tsx scripts/validate-with-copilot.ts
+        run: npx tsx scripts/validate-bugs.ts
 
       - name: Verify analysis output
         id: analysis-status
