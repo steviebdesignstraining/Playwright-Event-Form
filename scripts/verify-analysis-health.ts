@@ -130,8 +130,12 @@ function main() {
     }
 
     console.error('');
-    console.error('The API key was verified during authentication, but the');
-    console.error('generation request failed. No GitHub issues will be created.');
+    if (firstAiErrorType === 'SERVICE_UNAVAILABLE') {
+      console.error('Generation request failed due to service unavailability.');
+    } else {
+      console.error('The API key was verified during authentication, but the');
+      console.error('generation request failed. No GitHub issues will be created.');
+    }
     console.error('STATUS: FAILED');
     process.exit(1);
   }
