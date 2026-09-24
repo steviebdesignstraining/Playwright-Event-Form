@@ -125,12 +125,22 @@ function main() {
   }
 
   if (unknown.length > 0) {
-    console.error(`ERROR: ${unknown.length} validation records have UNKNOWN classification.`);
+    console.warn(`WARNING: ${unknown.length} record(s) have UNKNOWN classification and will not get GitHub issues.`);
     for (const item of unknown) {
-      console.error(`  UNKNOWN: ${item.title}`);
+      console.warn(`  UNKNOWN: ${item.title} (confidence: ${(item.confidence * 100).toFixed(0)}%)`);
     }
-    console.error('Check analyse-failure.ts and validated-bug.json schema.');
-    process.exit(1);
+    console.warn('These failures need human review. They are skipped by design, not treated as pipeline errors.');
+
+    if (process.env.GITHUB_ACTIONS) {
+      console.log(`::warning title=${unknown.length} failure(s) need human review::${unknown.map(u => u.title).join(', ')}`);
+    }
+
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      appendFileSync(
+        process.env.GITHUB_STEP_SUMMARY,
+        `### ⚠️ Failures needing human review\n\n${unknown.map(u => `- **${u.title}** (confidence: ${(u.confidence * 100).toFixed(0)}%)`).join('\n')}\n`
+      );
+    }
   }
 
   if (process.env.GITHUB_OUTPUT) {

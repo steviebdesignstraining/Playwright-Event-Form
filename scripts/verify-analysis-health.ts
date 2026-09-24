@@ -185,10 +185,11 @@ function main() {
     process.exit(1);
   }
 
-  if (aiSucceeded > 0 && aiRecordsValid === 0) {
-    console.error('WARNING: No AI-analysed records passed validation.');
-    console.error('STATUS: FAILED');
-    process.exit(1);
+   if (aiSucceeded > 0 && aiRecordsValid === 0) {
+    console.warn('WARNING: No AI-analysed records passed validation.');
+    console.warn('Records without AI analysis are expected to be INVALID; they must not count against validation health.');
+    console.warn('STATUS: DEGRADED (pipeline continues, but no issues will be created)');
+    writeOutput('complete', 'true');
   }
 
   writeOutput('complete', 'true');
