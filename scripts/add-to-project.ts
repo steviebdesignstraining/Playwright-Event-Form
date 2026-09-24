@@ -119,90 +119,71 @@ async function graphqlRequest(
 }
 
 async function findProject(token: string, owner: string, repo: string, projectName: string): Promise<ProjectInfo | null> {
-  // Try repository-level project first
-  const repoQuery = `
-    query($owner: String!, $repo: String!, $projectName: String!) {
-      repository(owner: $owner, name: $repo) {
-        projectV2ByName(name: $projectName) {
-          id
-          title
-          fields(first: 50) {
-            nodes {
-              id
-              name
-              type
-              ... on ProjectV2SingleSelectField {
-                options {
-                  id
-                  name
-                }
-              }
-              ... on ProjectV2MultiSelectField {
-                options {
-                  id
-                  name
-                }
-              }
-              ... on ProjectV2FieldConfiguration {
-                options {
-                  id
-                  name
-                }
-              }
-            }
+  const projectFieldsFragment = `
+    id
+    title
+    number
+    fields(first: 50) {
+      nodes {
+        id
+        name
+        type
+        ... on ProjectV2SingleSelectField {
+          options {
+            id
+            name
+          }
+        }
+        ... on ProjectV2MultiSelectField {
+          options {
+            id
+            name
+          }
+        }
+        ... on ProjectV2FieldConfiguration {
+          options {
+            id
+            name
           }
         }
       }
     }
   `;
 
-  const repoResult = await graphqlRequest(token, repoQuery, { owner, repo, projectName }) as {
-    repository?: {
-      projectV2ByName?: {
-        id: string;
-        title: string;
-        fields: { nodes: ProjectField[] };
-      } | null;
+  // 1. Try user-level project (personal account projects like "@steviebdesignstraining's Automation Tests")
+  const userQuery = `
+    query($login: String!, $projectName: String!) {
+      user(login: $login) {
+        projectsV2(first: 20, query: $projectName) {
+          nodes {
+            ${projectFieldsFragment}
+          }
+        }
+      }
+    }
+  `;
+
+  const userResult = await graphqlRequest(token, userQuery, { login: owner, projectName }) as {
+    user?: {
+      projectsV2?: {
+        nodes: Array<{ id: string; title: string; fields: { nodes: ProjectField[] } }>;
+      };
     } | null;
   };
 
-  if (repoResult?.repository?.projectV2ByName) {
-    const project = repoResult.repository.projectV2ByName;
-    return { id: project.id, title: project.title, fields: project.fields.nodes };
+  const userProjects = userResult?.user?.projectsV2?.nodes ?? [];
+  const userProject = userProjects.find(p => p.title === projectName);
+  if (userProject) {
+    console.log(`  → Found project "${projectName}" under user ${owner}`);
+    return { id: userProject.id, title: userProject.title, fields: userProject.fields.nodes };
   }
 
-  // Try organization-level project
+  // 2. Try organization-level project (using projectV2ByName)
   const orgQuery = `
     query($owner: String!, $projectName: String!) {
       organization(login: $owner) {
         projectV2ByName(name: $projectName) {
-          id
-          title
-          fields(first: 50) {
-            nodes {
-              id
-              name
-              type
-              ... on ProjectV2SingleSelectField {
-                options {
-                  id
-                  name
-                }
-              }
-              ... on ProjectV2MultiSelectField {
-                options {
-                  id
-                  name
-                }
-              }
-              ... on ProjectV2FieldConfiguration {
-                options {
-                  id
-                  name
-                }
-              }
-            }
-          }
+          ${projectFieldsFragment}
         }
       }
     }
@@ -220,7 +201,36 @@ async function findProject(token: string, owner: string, repo: string, projectNa
 
   if (orgResult?.organization?.projectV2ByName) {
     const project = orgResult.organization.projectV2ByName;
+    console.log(`  → Found project "${projectName}" under organization ${owner}`);
     return { id: project.id, title: project.title, fields: project.fields.nodes };
+  }
+
+  // 3. Try repository-level project (Repository does not have projectV2ByName, use projectsV2 + title filter)
+  const repoQuery = `
+    query($owner: String!, $repo: String!, $projectName: String!) {
+      repository(owner: $owner, name: $repo) {
+        projectsV2(first: 20, query: $projectName) {
+          nodes {
+            ${projectFieldsFragment}
+          }
+        }
+      }
+    }
+  `;
+
+  const repoResult = await graphqlRequest(token, repoQuery, { owner, repo, projectName }) as {
+    repository?: {
+      projectsV2?: {
+        nodes: Array<{ id: string; title: string; fields: { nodes: ProjectField[] } }>;
+      };
+    } | null;
+  };
+
+  const repoProjects = repoResult?.repository?.projectsV2?.nodes ?? [];
+  const repoProject = repoProjects.find(p => p.title === projectName);
+  if (repoProject) {
+    console.log(`  → Found project "${projectName}" under repository ${owner}/${repo}`);
+    return { id: repoProject.id, title: repoProject.title, fields: repoProject.fields.nodes };
   }
 
   return null;
