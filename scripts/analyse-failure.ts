@@ -50,9 +50,11 @@ type AnalysisEntry = {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
-const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-lite'];
+const GEMINI_MODELS = ['gemini-3.8-flash'];
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 2000;
+
+const AUTH_ERROR_PATTERNS = ['400', '401', '403', 'invalid auth', 'invalid key', 'unauthorized', 'forbidden', 'permission denied'];
 
 const BUG_ANALYSIS_SCHEMA = {
   type: 'object' as const,
@@ -347,9 +349,10 @@ async function analyseWithRetry(
 
   let lastError: string | undefined;
   let hitRateLimit = false;
+  let authFailed = false;
 
   for (const tryModel of modelsToTry) {
-    if (hitRateLimit) {
+    if (hitRateLimit || authFailed) {
       break;
     }
 
@@ -376,6 +379,13 @@ async function analyseWithRetry(
         lastError = error instanceof Error ? error.message : String(error);
         console.warn(`    Attempt ${attempt} with ${tryModel} failed: ${lastError}`);
 
+        const lowerErr = lastError.toLowerCase();
+        if (AUTH_ERROR_PATTERNS.some(p => lowerErr.includes(p.toLowerCase()))) {
+          console.error('  → AI API authentication failed. Stopping retries.');
+          authFailed = true;
+          break;
+        }
+
         if (lastError.includes('429') || lastError.includes('no credits') || lastError.includes('insufficient') || lastError.includes('quota')) {
           console.error('  → AI API returned 429 (rate limit / no credits). Stopping retries.');
           hitRateLimit = true;
@@ -387,13 +397,13 @@ async function analyseWithRetry(
         }
       }
 
-      if (hitRateLimit) break;
+      if (hitRateLimit || authFailed) break;
     }
-
-    if (hitRateLimit) break;
   }
 
-  if (hitRateLimit) {
+  if (authFailed) {
+    lastError = `Gemini API authentication error (400/401/403). The API key is invalid. ${lastError || ''}`;
+  } else if (hitRateLimit) {
     lastError = `AI API error: 429 — rate limit or no credits remaining. ${lastError || ''}`;
   }
 
@@ -439,7 +449,7 @@ async function main() {
     process.exit(1);
   }
 
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
   const failures = loadFailureData();
 
