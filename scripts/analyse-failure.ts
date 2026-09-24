@@ -51,8 +51,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
 const GEMINI_MODEL = 'gemini-3.8-flash';
-const MAX_RETRIES = 1;
-const RETRY_DELAY_MS = 5000;
+const MAX_ATTEMPTS = 4;
+const RETRY_DELAYS_MS = [5000, 15000, 30000, 60000];
 
 function loadFailureData(): FailureData[] {
   const path = join(rootDir, 'failure-data.json');
@@ -336,41 +336,67 @@ async function analyseWithRetry(
   let lastError: string | undefined;
   let retryDelayMs: number | undefined;
 
-  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      console.log(`  Attempt ${attempt}/${MAX_RETRIES + 1} with ${model}...`);
+      console.log(`  Attempt ${attempt}/${MAX_ATTEMPTS} with ${model}...`);
       const analyses = await callGemini(apiKey, model, SYSTEM_PROMPT, evidence);
       return analyses;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
-      const errWithDelay = error as { retryDelay?: string };
+      const errWithDelay = error as { retryDelay?: string; httpStatus?: number };
       retryDelayMs = errWithDelay.retryDelay ? parseRetryDelay(errWithDelay.retryDelay) : undefined;
 
       console.warn(`    Attempt ${attempt} failed: ${lastError}`);
 
       const lowerErr = lastError.toLowerCase();
-      const isAuthError = ['400', '401', '403'].some(c => lastError.includes(c)) ||
+
+      const isAuthError =
+        ['400', '401', '403'].some(c => lastError.includes(c)) ||
         lowerErr.includes('invalid auth') ||
         lowerErr.includes('invalid key') ||
         lowerErr.includes('unauthorized') ||
-        lowerErr.includes('forbidden');
+        lowerErr.includes('forbidden') ||
+        lowerErr.includes('permission denied');
 
       if (isAuthError) {
-        console.error('  → Gemini API authentication failed. Stopping retries.');
+        console.error('  → Gemini API authentication/permission error. Stopping retries.');
         break;
       }
 
-      const is429 = lowerErr.includes('429') || lowerErr.includes('quota') || lowerErr.includes('rate limit');
+      const isQuotaError =
+        lastError.includes('429') ||
+        lowerErr.includes('quota') ||
+        lowerErr.includes('rate limit exceeded');
 
-      if (attempt <= MAX_RETRIES) {
-        let delay = RETRY_DELAY_MS * attempt;
-        if (is429 && retryDelayMs) {
-          delay = Math.max(retryDelayMs, RETRY_DELAY_MS * attempt);
-          console.log(`    Respecting server retry delay: ${retryDelayMs / 1000}s`);
-        }
-        console.log(`    Waiting ${delay / 1000}s before retry...`);
-        await sleep(delay);
+      if (isQuotaError) {
+        console.error('  → Gemini API quota/rate limit exceeded. Stopping retries immediately.');
+        break;
       }
+
+      const is5xx =
+        lastError.includes('503') ||
+        lastError.includes('500') ||
+        lowerErr.includes('service_unavailable') ||
+        lowerErr.includes('internal server error') ||
+        lowerErr.includes('unavailable');
+
+      if (!is5xx && !isQuotaError) {
+        console.error('  → Non-retryable error. Stopping.');
+        break;
+      }
+
+      if (attempt === MAX_ATTEMPTS) {
+        console.error('  → Max retry attempts reached.');
+        break;
+      }
+
+      let delay = RETRY_DELAYS_MS[attempt - 1];
+      if (retryDelayMs) {
+        delay = Math.max(retryDelayMs, delay);
+        console.log(`    Respecting server retry delay: ${retryDelayMs / 1000}s`);
+      }
+      console.log(`    Waiting ${delay / 1000}s before retry...`);
+      await sleep(delay);
     }
   }
 
