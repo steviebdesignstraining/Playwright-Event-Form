@@ -130,28 +130,22 @@ async function findProject(
   projectName: string,
   projectNumber?: number
 ): Promise<ProjectInfo | null> {
+  // NOTE: `fields.nodes` is a union (ProjectV2FieldConfiguration), so nothing can be selected on it
+  // directly. Common attributes come from the ProjectV2FieldCommon interface, and options only exist
+  // on ProjectV2SingleSelectField. `dataType` is aliased to `type` so the rest of the script keeps working.
   const projectFieldsFragment = `
     id
     title
     number
     fields(first: 50) {
       nodes {
-        id
-        name
-        type
+        __typename
+        ... on ProjectV2FieldCommon {
+          id
+          name
+          type: dataType
+        }
         ... on ProjectV2SingleSelectField {
-          options {
-            id
-            name
-          }
-        }
-        ... on ProjectV2MultiSelectField {
-          options {
-            id
-            name
-          }
-        }
-        ... on ProjectV2FieldConfiguration {
           options {
             id
             name
@@ -254,9 +248,9 @@ async function findProject(
 
   // 3. Try repository-level project (Repository does not have projectV2ByName, use projectsV2 + title filter)
   const repoQuery = `
-    query($owner: String!, $repo: String!, $projectName: String!) {
+    query($owner: String!, $repo: String!) {
       repository(owner: $owner, name: $repo) {
-        projectsV2(first: 20, query: $projectName) {
+        projectsV2(first: 50) {
           nodes {
             ${projectFieldsFragment}
           }
@@ -265,13 +259,20 @@ async function findProject(
     }
   `;
 
-  const repoResult = await graphqlRequest(token, repoQuery, { owner, repo, projectName }) as {
+  type RepoResult = {
     repository?: {
       projectsV2?: {
         nodes: Array<{ id: string; title: string; fields: { nodes: ProjectField[] } }>;
       };
     } | null;
   };
+
+  let repoResult: RepoResult | null = null;
+  try {
+    repoResult = await graphqlRequest(token, repoQuery, { owner, repo }) as RepoResult;
+  } catch (error) {
+    console.warn(`  → Repository lookup skipped: ${error instanceof Error ? error.message : error}`);
+  }
 
   const repoProjects = repoResult?.repository?.projectsV2?.nodes ?? [];
   const repoProject = repoProjects.find(p => normaliseTitle(p.title) === normaliseTitle(projectName));
@@ -314,9 +315,6 @@ async function addIssueToProject(token: string, projectId: string, issueNodeId: 
         item {
           id
         }
-        userStatus {
-          message
-        }
       }
     }
   `;
@@ -327,13 +325,11 @@ async function addIssueToProject(token: string, projectId: string, issueNodeId: 
   }) as {
     addProjectV2ItemById?: {
       item?: { id: string };
-      userStatus?: { message: string };
     };
   };
 
   if (!result?.addProjectV2ItemById?.item?.id) {
-    const message = result?.addProjectV2ItemById?.userStatus?.message || 'Unknown error';
-    throw new Error(`Failed to add issue to project: ${message}`);
+    throw new Error('Failed to add issue to project: no item returned');
   }
 
   return result.addProjectV2ItemById.item.id;
