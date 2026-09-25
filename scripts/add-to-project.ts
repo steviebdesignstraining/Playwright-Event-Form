@@ -2,6 +2,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { setFieldValue } from './github-project.js';
 
 interface CreatedIssue {
   number: number;
@@ -333,77 +334,6 @@ async function addIssueToProject(token: string, projectId: string, issueNodeId: 
   }
 
   return result.addProjectV2ItemById.item.id;
-}
-
-async function setFieldValue(
-  token: string,
-  projectId: string,
-  itemId: string,
-  field: ProjectField,
-  value: string
-): Promise<void> {
-  let variables: Record<string, unknown>;
-
-  if (field.type === 'SINGLE_SELECT' && field.options) {
-    const option = field.options.find(o => o.name === value);
-    if (!option) {
-      console.warn(`  → Option "${value}" not found for field "${field.name}"`);
-      return;
-    }
-    variables = {
-      projectId,
-      itemId,
-      fieldId: field.id,
-      value: { optionId: option.id },
-    };
-  } else if (field.type === 'MULTI_SELECT' && field.options) {
-    const option = field.options.find(o => o.name === value);
-    if (!option) {
-      console.warn(`  → Option "${value}" not found for field "${field.name}"`);
-      return;
-    }
-    variables = {
-      projectId,
-      itemId,
-      fieldId: field.id,
-      value: { optionIds: [option.id] },
-    };
-  } else if (field.type === 'TEXT') {
-    variables = {
-      projectId,
-      itemId,
-      fieldId: field.id,
-      value: { text: value },
-    };
-  } else if (field.type === 'NUMBER') {
-    variables = {
-      projectId,
-      itemId,
-      fieldId: field.id,
-      value: { number: value },
-    };
-  } else {
-    console.warn(`  → Field "${field.name}" type "${field.type}" is not supported`);
-    return;
-  }
-
-  const mutation = `
-    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue) {
-      updateProjectV2ItemFieldValue(input: {
-        projectId: $projectId
-        itemId: $itemId
-        fieldId: $fieldId
-        value: $value
-      }) {
-        projectV2Item {
-          id
-        }
-      }
-    }
-  `;
-
-  await graphqlRequest(token, mutation, variables);
-  console.log(`  → Set ${field.name} = ${value}`);
 }
 
 async function main() {
