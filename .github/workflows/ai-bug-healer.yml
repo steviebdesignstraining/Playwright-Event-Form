@@ -23,7 +23,7 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
   PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-  PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+  PROJECT_NUMBER: '2'
   PROJECT_OWNER_TYPE: user
   DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
   AI_HEAL_MAX_ATTEMPTS: ${{ vars.AI_HEAL_MAX_ATTEMPTS || '2' }}
