@@ -21,6 +21,7 @@ concurrency:
 env:
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
   PROJECT_NAME: ${{ vars.PROJECT_NAME }}
   PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
   DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
@@ -378,7 +379,7 @@ jobs:
 
       - name: Update Project Status
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
           TARGET_STATUS: "AI Fixing"
@@ -529,7 +530,7 @@ jobs:
 
       - name: Update Project Status
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
           TARGET_STATUS: "Testing"
@@ -721,7 +722,7 @@ jobs:
 
       - name: Update Project Status
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
           TARGET_STATUS: "Human Review"
@@ -875,7 +876,7 @@ jobs:
 
       - name: Move Project to Done
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
           TARGET_STATUS: "Done"
@@ -944,7 +945,7 @@ jobs:
       - name: Move to AI Fix Failed
         if: needs.ai-investigate.outputs.confidence_below_threshold == 'true' || needs.apply-ai-fix.result == 'failure'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
           TARGET_STATUS: "AI Fix Failed"
@@ -955,7 +956,7 @@ jobs:
       - name: Move back to AI Fixing for retry
         if: needs.targeted-test.result == 'failure' || needs.full-regression.result == 'failure'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
           TARGET_STATUS: "AI Fixing"
