@@ -1,4 +1,5 @@
-import { writeFileSync, existsSync, mkdirSync, join, dirname } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, join } from 'node:fs';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 
