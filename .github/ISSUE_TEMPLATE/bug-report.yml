@@ -6,7 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Automated QA Pipeline:** This issue will be analysed by OpenAI and validated by GitHub Copilot before entering the bug project.
+        **Automated QA Pipeline:** This issue will be analysed by Gemini AI and validated before entering the bug project.
+
+        **AI Bug Healer:** Once on the project dashboard, this bug can be healed by running the "AI Bug Healer" workflow with this issue number.
 
   - type: textarea
     id: description
@@ -58,7 +60,7 @@ body:
         - Branch: main
         - Commit: (latest)
 
-  - type: attachments
+  - type: upload
     id: evidence
     attributes:
       label: Evidence
