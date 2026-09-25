@@ -504,7 +504,7 @@ jobs:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
-  PROJECT_OWNER_TYPE: user
+          PROJECT_OWNER_TYPE: user
         run: |
           echo "========================================"
           echo "Adding issues to GitHub Project"

@@ -157,7 +157,14 @@ async function findProject(
 
   // 0. Most reliable: look the project up by its number (the N in /users/<owner>/projects/N)
   if (projectNumber) {
-    for (const ownerType of ['user', 'organization'] as const) {
+    // This project is user-owned (/users/<owner>/projects/<number>).
+    // Do not probe the organization API: the repository owner is a user,
+    // and that lookup produces misleading "organization not found" errors.
+    const ownerType = process.env.PROJECT_OWNER_TYPE === 'organization'
+      ? 'organization'
+      : 'user';
+
+    {
       try {
         const numberQuery = `
           query($login: String!, $number: Int!) {
