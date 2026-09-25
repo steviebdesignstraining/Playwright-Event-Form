@@ -526,7 +526,7 @@ export async function updateItemStatus(
     projectId,
     itemId,
     fieldId: statusFieldId,
-    value: { optionId: statusOptionId },
+    value: { singleSelectOptionId: statusOptionId },
   });
   console.log(`  → Updated Project status to option ID: ${statusOptionId}`);
 }
@@ -563,7 +563,7 @@ export async function setFieldValue(
       projectId,
       itemId,
       fieldId: field.id,
-      value: { optionId: option.id },
+      value: { singleSelectOptionId: option.id },
     };
   } else if (field.type === 'MULTI_SELECT' && field.options) {
     const option = field.options.find(o => o.name === value);
@@ -575,7 +575,7 @@ export async function setFieldValue(
       projectId,
       itemId,
       fieldId: field.id,
-      value: { optionIds: [option.id] },
+      value: { multiSelectOptionIds: [option.id] },
     };
   } else if (field.type === 'TEXT') {
     variables = {
