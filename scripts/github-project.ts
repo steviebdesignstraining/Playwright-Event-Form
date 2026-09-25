@@ -419,10 +419,85 @@ export function getStatusField(project: ProjectInfo): ProjectField | undefined {
   return project.fields.find(f => f.name === 'Status' && f.type === 'SINGLE_SELECT');
 }
 
-export function getStatusOptionId(statusField: ProjectField, statusName: string): string | null {
-  if (!statusField.options) return null;
-  const option = statusField.options.find(o => o.name === statusName);
-  return option?.id || null;
+export async function ensureStatusOption(
+  token: string,
+  projectId: string,
+  statusField: ProjectField,
+  statusName: string
+): Promise<string | null> {
+  const existing = statusField.options?.find(o => o.name === statusName);
+  if (existing) {
+    return existing.id;
+  }
+
+  if (statusField.type !== 'SINGLE_SELECT') {
+    return null;
+  }
+
+  const existingOptions = statusField.options ?? [];
+  if (existingOptions.length >= 50) {
+    throw new Error('The Status field already has the maximum of 50 single-select options.');
+  }
+
+  const colours = ['GRAY', 'BLUE', 'PURPLE', 'ORANGE', 'YELLOW', 'GREEN', 'RED'] as const;
+  const colour = colours[existingOptions.length % colours.length];
+
+  const mutation = `
+    mutation($fieldId: ID!, $name: String!, $options: [ProjectV2SingleSelectFieldOptionInput!]) {
+      updateProjectV2Field(input: {
+        fieldId: $fieldId
+        name: $name
+        singleSelectOptions: $options
+      }) {
+        projectV2Field {
+          ... on ProjectV2SingleSelectField {
+            id
+            name
+            options {
+              id
+              name
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const options = [
+    ...existingOptions.map(option => ({
+      id: option.id,
+      name: option.name,
+      color: 'GRAY',
+      description: option.name,
+    })),
+    {
+      name: statusName,
+      color: colour,
+      description: `AI Bug Healer workflow status: ${statusName}`,
+    },
+  ];
+
+  const result = await graphqlRequest(token, mutation, {
+    fieldId: statusField.id,
+    name: statusField.name,
+    options,
+  }) as {
+    updateProjectV2Field?: {
+      projectV2Field?: {
+        options?: Array<{ id: string; name: string }>;
+      } | null;
+    };
+  };
+
+  const updatedOptions = result?.updateProjectV2Field?.projectV2Field?.options ?? [];
+  const created = updatedOptions.find(option => option.name === statusName);
+
+  if (!created) {
+    throw new Error(`GitHub Project Status option "${statusName}" could not be created.`);
+  }
+
+  console.log(`  → Created missing Project Status option "${statusName}"`);
+  return created.id;
 }
 
 export async function updateItemStatus(
