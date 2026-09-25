@@ -501,9 +501,10 @@ jobs:
         env:
           # Personal (user-owned) Projects v2 are invisible to the default GITHUB_TOKEN.
           # PROJECT_PAT = classic PAT with `repo` + `project` scopes.
-          GITHUB_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
+          PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+  PROJECT_OWNER_TYPE: user
         run: |
           echo "========================================"
           echo "Adding issues to GitHub Project"
