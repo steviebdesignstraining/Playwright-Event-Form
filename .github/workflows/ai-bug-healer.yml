@@ -216,7 +216,7 @@ jobs:
 
   create-fix-branch:
     name: Create Fix Branch
-    needs: update-project-investigating
+    needs: [update-project-investigating, select-bug]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -399,7 +399,7 @@ jobs:
 
   apply-ai-fix:
     name: Apply AI Fix
-    needs: update-project-fixing
+    needs: [update-project-fixing, create-fix-branch]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -459,7 +459,7 @@ jobs:
 
   validate-ai-patch:
     name: Validate AI Patch
-    needs: apply-ai-fix
+    needs: [apply-ai-fix, create-fix-branch]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -553,7 +553,7 @@ jobs:
 
   targeted-test:
     name: Run Targeted Test
-    needs: update-project-testing
+    needs: [update-project-testing, create-fix-branch]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -604,7 +604,7 @@ jobs:
 
   full-regression:
     name: Full Regression
-    needs: targeted-test
+    needs: [targeted-test, create-fix-branch]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -656,7 +656,7 @@ jobs:
 
   create-pull-request:
     name: Create Pull Request
-    needs: full-regression
+    needs: [full-regression, create-fix-branch]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
