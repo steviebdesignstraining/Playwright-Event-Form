@@ -39,6 +39,8 @@
     "gh-vars:push": "node scripts/sync-github-secrets.mjs push-vars",
     "gh-secrets:push-all": "node scripts/sync-github-secrets.mjs push-all",
     "gh-secrets:push-ai": "node scripts/sync-github-secrets.mjs push-env-secret",
+    "gh-secrets:push-ai-healer": "node scripts/sync-github-secrets.mjs push-ai-healer-secrets",
+    "gh-vars:push-ai-healer": "node scripts/sync-github-secrets.mjs push-ai-healer-vars",
     "gh-secrets:list": "node scripts/sync-github-secrets.mjs list-secrets",
     "gh-vars:list": "node scripts/sync-github-secrets.mjs list-vars",
     "gh-secrets:delete": "node scripts/sync-github-secrets.mjs delete-secret",

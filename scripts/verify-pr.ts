@@ -126,7 +126,7 @@ function getRepoInfo(): { owner: string; repo: string } {
 }
 
 async function main() {
-  console.log('Waiting for human review...');
+  console.log('Waiting for human review and merge...');
 
   const token = process.env.GITHUB_TOKEN;
   if (!token) {
@@ -151,7 +151,7 @@ async function main() {
   const pollIntervalSeconds = parseInt(process.env.POLL_INTERVAL_SECONDS || '30', 10);
   const maxAttempts = Math.floor((maxWaitMinutes * 60) / pollIntervalSeconds);
 
-  console.log(`Waiting up to ${maxWaitMinutes} minutes for human review...`);
+  console.log(`Waiting up to ${maxWaitMinutes} minutes for human review and merge...`);
   console.log(`Polling every ${pollIntervalSeconds} seconds.`);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -180,18 +180,17 @@ async function main() {
         process.exit(1);
       }
 
-      if (status.reviewDecision === 'APPROVED') {
-        console.log('\n✅ PR approved! Ready for merge.');
-        summary.reviewStatus = 'approved';
-        saveAiFixSummary(summary);
-        process.exit(0);
-      }
-
       if (status.reviewDecision === 'CHANGES_REQUESTED') {
         console.log('\n⚠️ Changes requested on PR.');
         summary.reviewStatus = 'changes_requested';
         saveAiFixSummary(summary);
         process.exit(2);
+      }
+
+      if (status.reviewDecision === 'APPROVED') {
+        console.log('\n✅ PR approved! Waiting for human to merge...');
+        summary.reviewStatus = 'approved';
+        saveAiFixSummary(summary);
       }
 
     } catch (error) {
@@ -203,8 +202,8 @@ async function main() {
     }
   }
 
-  console.log('\n⏱️ Timeout waiting for human review.');
-  console.log('The PR is still open and awaiting review.');
+  console.log('\n⏱️ Timeout waiting for human review and merge.');
+  console.log('The PR is still open and awaiting review/merge.');
   process.exit(3);
 }
 

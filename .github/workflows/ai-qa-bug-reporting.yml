@@ -378,6 +378,7 @@ jobs:
 
     outputs:
       issues_created: ${{ steps.check-bugs.outputs.issues_created }}
+      issue_numbers: ${{ steps.extract-issue-numbers.outputs.issue_numbers }}
 
     steps:
 
@@ -428,6 +429,14 @@ jobs:
 
           echo "Created issues:"
           cat created-issues.json
+
+      - name: Extract Issue Numbers
+        id: extract-issue-numbers
+        if: steps.check-bugs.outputs.issues_created == 'true'
+        run: |
+          ISSUE_NUMBERS=$(cat created-issues.json | jq -r '.[].issue.number' | tr '\n' ',' | sed 's/,$//')
+          echo "issue_numbers=$ISSUE_NUMBERS" >> "$GITHUB_OUTPUT"
+          echo "Issue numbers: $ISSUE_NUMBERS"
 
       - name: Upload created issues
         if: steps.check-bugs.outputs.issues_created == 'true'
@@ -591,3 +600,54 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
+  # ============================================================
+  # 7. DISPATCH AI BUG HEALER
+  # ============================================================
+
+  dispatch-ai-bug-healer:
+    name: Dispatch AI Bug Healer
+    needs:
+      - create-issue
+      - add-to-project
+
+    if: |
+      needs.create-issue.result == 'success' &&
+      needs.create-issue.outputs.issues_created == 'true'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Check if issues were created
+        id: check-issues
+        run: |
+          ISSUE_NUMBERS="${{ needs.create-issue.outputs.issue_numbers }}"
+          if [ -z "$ISSUE_NUMBERS" ]; then
+            echo "No issues were created. Skipping AI Bug Healer dispatch."
+            echo "should_dispatch=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Issues created: $ISSUE_NUMBERS"
+            echo "should_dispatch=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch AI Bug Healer
+        if: steps.check-issues.outputs.should_dispatch == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBERS: ${{ needs.create-issue.outputs.issue_numbers }}
+        run: |
+          echo "========================================"
+          echo "Dispatching AI Bug Healer"
+          echo "========================================"
+          echo "Issue numbers: $ISSUE_NUMBERS"
+
+          gh workflow run ai-bug-healer.yml \
+            --ref "${{ github.event.repository.default_branch || 'main' }}" \
+            -f issue_numbers="$ISSUE_NUMBERS"
+
+          echo "AI Bug Healer dispatched successfully."

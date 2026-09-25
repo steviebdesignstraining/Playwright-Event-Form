@@ -3,8 +3,8 @@ name: AI Bug Healer
 on:
   workflow_dispatch:
     inputs:
-      issue_number:
-        description: "GitHub Issue number to heal"
+      issue_numbers:
+        description: "Comma-separated GitHub Issue numbers to heal"
         required: true
         type: string
 
@@ -13,6 +13,10 @@ permissions:
   issues: write
   pull-requests: write
   repository-projects: write
+
+concurrency:
+  group: ai-bug-healer
+  cancel-in-progress: false
 
 env:
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -35,6 +39,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       issue_number: ${{ steps.set-outputs.outputs.issue_number }}
+      remaining_issues: ${{ steps.set-outputs.outputs.remaining_issues }}
       project_item_id: ${{ steps.set-outputs.outputs.project_item_id }}
       project_status: ${{ steps.set-outputs.outputs.project_status }}
       issue_title: ${{ steps.set-outputs.outputs.issue_title }}
@@ -54,12 +59,44 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Parse Issue Numbers
+        id: parse-issues
+        run: |
+          ISSUE_NUMBERS="${{ github.event.inputs.issue_numbers }}"
+          echo "Input issue numbers: $ISSUE_NUMBERS"
+          
+          # Split by comma and trim whitespace
+          IFS=',' read -ra RAW_ISSUES <<< "$ISSUE_NUMBERS"
+          ISSUE_LIST=()
+          for issue in "${RAW_ISSUES[@]}"; do
+            issue=$(echo "$issue" | xargs)
+            if [[ "$issue" =~ ^[0-9]+$ ]]; then
+              ISSUE_LIST+=("$issue")
+            fi
+          done
+          
+          echo "Parsed issues: ${ISSUE_LIST[*]}"
+          
+          # Take the first issue
+          FIRST_ISSUE="${ISSUE_LIST[0]}"
+          echo "issue_number=$FIRST_ISSUE" >> "$GITHUB_OUTPUT"
+          
+          # Remaining issues (if any)
+          if [ ${#ISSUE_LIST[@]} -gt 1 ]; then
+            REMAINING=$(IFS=','; echo "${ISSUE_LIST[*]:1}")
+            echo "remaining_issues=$REMAINING" >> "$GITHUB_OUTPUT"
+            echo "Remaining issues: $REMAINING"
+          else
+            echo "remaining_issues=" >> "$GITHUB_OUTPUT"
+            echo "No remaining issues."
+          fi
+
       - name: Validate Issue Input
         id: validate-input
         run: |
-          ISSUE_NUMBER="${{ github.event.inputs.issue_number }}"
-          if ! [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
-            echo "ERROR: Issue number must be a positive integer"
+          ISSUE_NUMBER="${{ steps.parse-issues.outputs.issue_number }}"
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "ERROR: No issue number provided"
             exit 1
           fi
           echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
@@ -93,25 +130,30 @@ jobs:
           STATUS="${{ steps.read-context.outputs.project_status }}"
           echo "Current Project status: $STATUS"
           if [ "$STATUS" = "Done" ]; then
-            echo "Issue is already Done. Stopping."
-            exit 1
+            echo "Issue is already Done. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           if [ "$STATUS" = "AI Investigating" ] || [ "$STATUS" = "AI Fixing" ] || [ "$STATUS" = "Testing" ] || [ "$STATUS" = "Human Review" ]; then
-            echo "Another healing process may be running (status: $STATUS). Stopping to prevent conflicts."
-            exit 1
+            echo "Another healing process may be running (status: $STATUS). Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           if [ "$STATUS" = "AI Fix Failed" ]; then
             echo "Previous healing attempt failed. Manual retry required."
-            exit 1
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           if [ "$STATUS" != "Todo" ]; then
             echo "WARNING: Unexpected status '$STATUS', expected 'Todo'. Continuing anyway."
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Set Job Outputs
         id: set-outputs
         run: |
           echo "issue_number=${{ steps.read-context.outputs.issue_number }}" >> "$GITHUB_OUTPUT"
+          echo "remaining_issues=${{ steps.parse-issues.outputs.remaining_issues }}" >> "$GITHUB_OUTPUT"
           echo "project_item_id=${{ steps.read-context.outputs.project_item_id }}" >> "$GITHUB_OUTPUT"
           echo "project_status=${{ steps.read-context.outputs.project_status }}" >> "$GITHUB_OUTPUT"
           echo "issue_title=${{ steps.read-context.outputs.issue_title }}" >> "$GITHUB_OUTPUT"
@@ -203,7 +245,7 @@ jobs:
         id: create-branch
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEFAULT_BRANCH: ${{ env.DEFAULT_BRANCH }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
         run: |
           ISSUE_NUMBER="${{ needs.select-bug.outputs.issue_number }}"
           ISSUE_TITLE="${{ needs.select-bug.outputs.issue_title }}"
@@ -243,9 +285,9 @@ jobs:
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
-      CONFIDENCE_THRESHOLD: ${{ env.AI_HEAL_CONFIDENCE_THRESHOLD }}
+      CONFIDENCE_THRESHOLD: ${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD || '0.70' }}
       ATTEMPT_NUMBER: 1
-      MAX_ATTEMPTS: ${{ env.AI_HEAL_MAX_ATTEMPTS }}
+      MAX_ATTEMPTS: ${{ vars.AI_HEAL_MAX_ATTEMPTS || '2' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -281,7 +323,7 @@ jobs:
         id: check-confidence
         run: |
           CONFIDENCE=$(cat root-cause.json | jq -r '.confidence')
-          THRESHOLD="${{ env.AI_HEAL_CONFIDENCE_THRESHOLD }}"
+          THRESHOLD="${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD || '0.70' }}"
           echo "AI Confidence: $CONFIDENCE (threshold: $THRESHOLD)"
           if (( $(echo "$CONFIDENCE < $THRESHOLD" | bc -l) )); then
             echo "confidence_below_threshold=true" >> "$GITHUB_OUTPUT"
@@ -359,10 +401,10 @@ jobs:
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
-      CONFIDENCE_THRESHOLD: ${{ env.AI_HEAL_CONFIDENCE_THRESHOLD }}
-      MAX_FILES: ${{ env.AI_HEAL_MAX_FILES }}
-      MAX_ADDED_LINES: ${{ env.AI_HEAL_MAX_ADDED_LINES }}
-      MAX_DELETED_LINES: ${{ env.AI_HEAL_MAX_DELETED_LINES }}
+      CONFIDENCE_THRESHOLD: ${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD || '0.70' }}
+      MAX_FILES: ${{ vars.AI_HEAL_MAX_FILES || '10' }}
+      MAX_ADDED_LINES: ${{ vars.AI_HEAL_MAX_ADDED_LINES || '300' }}
+      MAX_DELETED_LINES: ${{ vars.AI_HEAL_MAX_DELETED_LINES || '150' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -444,9 +486,9 @@ jobs:
 
       - name: Validate Patch
         env:
-          MAX_FILES: ${{ env.AI_HEAL_MAX_FILES }}
-          MAX_ADDED_LINES: ${{ env.AI_HEAL_MAX_ADDED_LINES }}
-          MAX_DELETED_LINES: ${{ env.AI_HEAL_MAX_DELETED_LINES }}
+          MAX_FILES: ${{ vars.AI_HEAL_MAX_FILES || '10' }}
+          MAX_ADDED_LINES: ${{ vars.AI_HEAL_MAX_ADDED_LINES || '300' }}
+          MAX_DELETED_LINES: ${{ vars.AI_HEAL_MAX_DELETED_LINES || '150' }}
         run: |
           npx tsx scripts/validate-patch.ts
 
@@ -638,7 +680,7 @@ jobs:
       - name: Create Pull Request
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEFAULT_BRANCH: ${{ env.DEFAULT_BRANCH }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
         run: |
           npx tsx scripts/create-pull-request.ts
 
@@ -698,10 +740,14 @@ jobs:
     name: Wait for Human Review
     needs: update-project-review
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ env.MAX_WAIT_MINUTES }}
+    timeout-minutes: 65
     env:
-      MAX_WAIT_MINUTES: ${{ env.MAX_WAIT_MINUTES }}
-      POLL_INTERVAL_SECONDS: ${{ env.POLL_INTERVAL_SECONDS }}
+      MAX_WAIT_MINUTES: ${{ vars.AI_HEAL_MAX_WAIT_MINUTES || '60' }}
+      POLL_INTERVAL_SECONDS: ${{ vars.AI_HEAL_POLL_INTERVAL || '30' }}
+    outputs:
+      review_approved: ${{ steps.check-review.outputs.review_approved }}
+      changes_requested: ${{ steps.check-review.outputs.changes_requested }}
+      timeout: ${{ steps.check-review.outputs.timeout }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -725,8 +771,8 @@ jobs:
       - name: Wait for Human Review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MAX_WAIT_MINUTES: ${{ env.MAX_WAIT_MINUTES }}
-          POLL_INTERVAL_SECONDS: ${{ env.POLL_INTERVAL_SECONDS }}
+          MAX_WAIT_MINUTES: ${{ vars.AI_HEAL_MAX_WAIT_MINUTES || '60' }}
+          POLL_INTERVAL_SECONDS: ${{ vars.AI_HEAL_POLL_INTERVAL || '30' }}
         run: |
           npx tsx scripts/verify-pr.ts
 
@@ -788,7 +834,7 @@ jobs:
       - name: Verify Merge and Post-Merge Tests
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEFAULT_BRANCH: ${{ env.DEFAULT_BRANCH }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
         run: |
           npx tsx scripts/verify-merge.ts
 
@@ -802,7 +848,7 @@ jobs:
 
   update-project-done:
     name: Move to Done
-    needs: verify-merged-fix
+    needs: [verify-merged-fix, select-bug]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -928,3 +974,53 @@ jobs:
         run: |
           echo "Timeout waiting for human review. PR is still open awaiting review."
           echo "Project status remains at Human Review."
+
+  dispatch-next:
+    name: Dispatch Next Bug
+    needs: [select-bug, update-project-done, handle-failure]
+    if: always() && needs.select-bug.outputs.remaining_issues != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Bug Context
+        uses: actions/download-artifact@v4
+        with:
+          name: bug-context
+          path: .
+
+      - name: Dispatch Next Bug
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REMAINING_ISSUES: ${{ needs.select-bug.outputs.remaining_issues }}
+        run: |
+          REMAINING="${{ needs.select-bug.outputs.remaining_issues }}"
+          if [ -z "$REMAINING" ]; then
+            echo "No remaining issues to process."
+            exit 0
+          fi
+          
+          echo "Remaining issues to heal: $REMAINING"
+          echo "Dispatching AI Bug Healer for next bug..."
+          
+          gh workflow run ai-bug-healer.yml \
+            --ref "${{ github.event.repository.default_branch || 'main' }}" \
+            -f issue_numbers="$REMAINING"
+          
+          echo "Next bug dispatched successfully."

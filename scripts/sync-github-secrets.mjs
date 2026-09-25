@@ -272,26 +272,106 @@ Commands:
    list-envs             List available local venv environments
    push-env-secret <name>        Push a single secret from .env.local to GitHub secrets
    push-env-var <name>           Push a single variable from .env.local to GitHub variables
+   push-ai-healer-vars           Push all AI Bug Healer variables to GitHub variables
+   push-ai-healer-secrets        Push all AI Bug Healer secrets to GitHub secrets
 
 Prerequisites:
-  - GitHub CLI (gh) installed: https://cli.github.com/
-  - Authenticated: gh auth login
-  - Repository permissions: admin or write access
+   - GitHub CLI (gh) installed: https://cli.github.com/
+   - Authenticated: gh auth login
+   - Repository permissions: admin or write access
 
 Examples:
-  node scripts/sync-github-secrets.mjs push-all local
-  node scripts/sync-github-secrets.mjs push-secrets staging
-  node scripts/sync-github-secrets.mjs push-vars production
-  node scripts/sync-github-secrets.mjs push-env-secret GEMINI_API_KEY
-  node scripts/sync-github-secrets.mjs push-env-var GEMINI_MODEL
-  node scripts/sync-github-secrets.mjs list-secrets
-  node scripts/sync-github-secrets.mjs list-vars
-  node scripts/sync-github-secrets.mjs delete-secret OLD_API_KEY
-  node scripts/sync-github-secrets.mjs list-envs
+   node scripts/sync-github-secrets.mjs push-all local
+   node scripts/sync-github-secrets.mjs push-secrets staging
+   node scripts/sync-github-secrets.mjs push-vars production
+   node scripts/sync-github-secrets.mjs push-env-secret GEMINI_API_KEY
+   node scripts/sync-github-secrets.mjs push-env-var GEMINI_MODEL
+   node scripts/sync-github-secrets.mjs push-ai-healer-vars
+   node scripts/sync-github-secrets.mjs push-ai-healer-secrets
+   node scripts/sync-github-secrets.mjs list-secrets
+   node scripts/sync-github-secrets.mjs list-vars
+   node scripts/sync-github-secrets.mjs delete-secret OLD_API_KEY
+   node scripts/sync-github-secrets.mjs list-envs
 
 Environment Variables:
-  GH_REPO              Override repository (format: owner/repo)
+   GH_REPO              Override repository (format: owner/repo)
 `);
+}
+
+/**
+ * Push all AI Bug Healer repository variables with safe defaults.
+ * These variables configure the AI healing workflow.
+ */
+function pushAiHealerVars() {
+  const repo = getRepo();
+  
+  /** @type {Record<string, string>} */
+  const variables = {
+    AI_HEAL_MAX_ATTEMPTS: process.env.AI_HEAL_MAX_ATTEMPTS || '2',
+    AI_HEAL_MAX_FILES: process.env.AI_HEAL_MAX_FILES || '10',
+    AI_HEAL_MAX_ADDED_LINES: process.env.AI_HEAL_MAX_ADDED_LINES || '300',
+    AI_HEAL_MAX_DELETED_LINES: process.env.AI_HEAL_MAX_DELETED_LINES || '150',
+    AI_HEAL_CONFIDENCE_THRESHOLD: process.env.AI_HEAL_CONFIDENCE_THRESHOLD || '0.70',
+    AI_HEAL_MAX_WAIT_MINUTES: process.env.AI_HEAL_MAX_WAIT_MINUTES || '60',
+    AI_HEAL_POLL_INTERVAL: process.env.AI_HEAL_POLL_INTERVAL || '30',
+    GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+  };
+
+  // Only push PROJECT_NAME if explicitly set - don't overwrite existing values
+  if (process.env.PROJECT_NAME) {
+    variables.PROJECT_NAME = process.env.PROJECT_NAME;
+  }
+
+  // Skip PROJECT_NUMBER entirely - it should be set manually per project
+  // and we don't want to accidentally overwrite an existing value
+
+  console.log(`Pushing ${Object.keys(variables).length} AI Bug Healer variables to ${repo}...`);
+
+  for (const [key, value] of Object.entries(variables)) {
+    try {
+      runGh(`variable set "${key}" --body "${value}" --repo ${repo}`, { silent: true });
+      console.log(`  ✓ ${key} = ${value}`);
+    } catch {
+      console.error(`  ✗ ${key} (failed)`);
+    }
+  }
+
+  console.log('\nDone!');
+  console.log('\nNote: PROJECT_NAME and PROJECT_NUMBER are not pushed automatically.');
+  console.log('Set them manually in GitHub Settings → Variables → Repository.');
+  console.log('PROJECT_NUMBER can be found in your Project URL: https://github.com/<owner>/<repo>/projects/<number>');
+}
+
+/**
+ * Push all AI Bug Healer secrets.
+ * These secrets are required for the AI healing workflow to function.
+ */
+function pushAiHealerSecrets() {
+  const repo = getRepo();
+  
+  /** @type {Record<string, string>} */
+  const secrets = {
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+  };
+
+  console.log(`Pushing AI Bug Healer secrets to ${repo}...`);
+
+  for (const [key, value] of Object.entries(secrets)) {
+    if (!value) {
+      console.log(`  ⚠ ${key} not set in environment, skipping`);
+      continue;
+    }
+    try {
+      runGh(`secret set "${key}" --body "${value}" --repo ${repo}`, { silent: true });
+      console.log(`  ✓ ${key}`);
+    } catch {
+      console.error(`  ✗ ${key} (failed)`);
+    }
+  }
+
+  console.log('\nDone!');
+  console.log('\nNote: GITHUB_TOKEN is automatically provided by GitHub Actions.');
+  console.log('If using a personal project, also set PROJECT_PAT secret with repo + project scopes.');
 }
 
 const args = process.argv.slice(2);
@@ -336,6 +416,12 @@ switch (command) {
   case 'push-env-var':
     if (!arg1) { console.error('Error: variable name required'); process.exit(1); }
     pushEnvVar(arg1);
+    break;
+  case 'push-ai-healer-vars':
+    pushAiHealerVars();
+    break;
+  case 'push-ai-healer-secrets':
+    pushAiHealerSecrets();
     break;
   default:
     showHelp();
