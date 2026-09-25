@@ -46,9 +46,9 @@ const VALID_STATUSES = [
 async function main() {
   console.log('Updating GitHub Project status...');
 
-  const token = process.env.GITHUB_TOKEN;
+  const token = process.env.PROJECT_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) {
-    console.error('GITHUB_TOKEN environment variable is not set.');
+    console.error('PROJECT_TOKEN or GITHUB_TOKEN environment variable is not set.');
     process.exit(1);
   }
 
