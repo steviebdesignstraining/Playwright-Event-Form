@@ -42,17 +42,6 @@ interface ProjectInfo {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 
-function getBrowserFromProject(project: string): string {
-  const p = project.toLowerCase();
-  if (p === 'chromium') return 'Chromium';
-  if (p === 'firefox') return 'Firefox';
-  if (p === 'webkit') return 'WebKit';
-  if (p === 'api') return 'API';
-  if (p.includes('chrome')) return 'Chrome';
-  if (p.includes('edge')) return 'Edge';
-  return 'Unknown';
-}
-
 function getRepoInfo(): { owner: string; repo: string } {
   const ghRepo = process.env.GITHUB_REPOSITORY;
   if (ghRepo) {
@@ -471,17 +460,25 @@ async function main() {
       continue;
     }
 
+    // Map bug metadata onto the project's actual fields.
+    // Only fields that exist on the project are set; unknown fields are skipped
+    // with a warning so this stays portable across different project templates.
+    const sizeFromSeverity = (severity?: string): string => {
+      switch ((severity || '').toLowerCase()) {
+        case 'critical': return 'XL';
+        case 'high': return 'L';
+        case 'low': return 'S';
+        default: return 'M';
+      }
+    };
+
     const fieldsToSet = [
-      { field: 'Type', value: 'Bug' },
-      { field: 'Severity', value: bug.severity },
       { field: 'Priority', value: bug.priority },
-      { field: 'Failure Type', value: bug.failureType },
-      { field: 'Automation', value: 'Playwright' },
-      { field: 'Browser', value: getBrowserFromProject(bug.project || '') },
-      { field: 'Environment', value: 'CI' },
+      { field: 'Size', value: sizeFromSeverity(bug.severity) },
     ];
 
     for (const { field: fieldName, value } of fieldsToSet) {
+      if (!value) continue;
       const field = findField(fieldName);
       if (!field) {
         console.warn(`  → Field "${fieldName}" not found in project`);
@@ -494,6 +491,8 @@ async function main() {
         console.error(`  → Failed to set ${fieldName}: ${error instanceof Error ? error.message : error}`);
       }
     }
+
+    console.log(`  → Set Priority=${bug.priority}, Size=${sizeFromSeverity(bug.severity)}`);
   }
 
   console.log('Done.');
