@@ -1,0 +1,930 @@
+name: AI Bug Healer
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "GitHub Issue number to heal"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  repository-projects: write
+
+env:
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+  PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+  AI_HEAL_MAX_ATTEMPTS: ${{ vars.AI_HEAL_MAX_ATTEMPTS || '2' }}
+  AI_HEAL_MAX_FILES: ${{ vars.AI_HEAL_MAX_FILES || '10' }}
+  AI_HEAL_MAX_ADDED_LINES: ${{ vars.AI_HEAL_MAX_ADDED_LINES || '300' }}
+  AI_HEAL_MAX_DELETED_LINES: ${{ vars.AI_HEAL_MAX_DELETED_LINES || '150' }}
+  AI_HEAL_CONFIDENCE_THRESHOLD: ${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD || '0.70' }}
+  MAX_WAIT_MINUTES: ${{ vars.AI_HEAL_MAX_WAIT_MINUTES || '60' }}
+  POLL_INTERVAL_SECONDS: ${{ vars.AI_HEAL_POLL_INTERVAL || '30' }}
+
+jobs:
+  select-bug:
+    name: Select & Validate Bug
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      issue_number: ${{ steps.set-outputs.outputs.issue_number }}
+      project_item_id: ${{ steps.set-outputs.outputs.project_item_id }}
+      project_status: ${{ steps.set-outputs.outputs.project_status }}
+      issue_title: ${{ steps.set-outputs.outputs.issue_title }}
+      issue_url: ${{ steps.set-outputs.outputs.issue_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Issue Input
+        id: validate-input
+        run: |
+          ISSUE_NUMBER="${{ github.event.inputs.issue_number }}"
+          if ! [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: Issue number must be a positive integer"
+            exit 1
+          fi
+          echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Issue Details
+        id: fetch-issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.validate-input.outputs.issue_number }}
+        run: |
+          npx tsx scripts/fetch-issue.ts
+
+      - name: Read Bug Context
+        id: read-context
+        run: |
+          CONTEXT=$(cat bug-context.json)
+          ISSUE_NUMBER=$(echo "$CONTEXT" | jq -r '.issueNumber')
+          PROJECT_ITEM_ID=$(echo "$CONTEXT" | jq -r '.projectItemId')
+          PROJECT_STATUS=$(echo "$CONTEXT" | jq -r '.projectStatus')
+          ISSUE_TITLE=$(echo "$CONTEXT" | jq -r '.title')
+          ISSUE_URL=$(echo "$CONTEXT" | jq -r '.url')
+          echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "project_item_id=$PROJECT_ITEM_ID" >> "$GITHUB_OUTPUT"
+          echo "project_status=$PROJECT_STATUS" >> "$GITHUB_OUTPUT"
+          echo "issue_title=$ISSUE_TITLE" >> "$GITHUB_OUTPUT"
+          echo "issue_url=$ISSUE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Project Status
+        id: validate-status
+        run: |
+          STATUS="${{ steps.read-context.outputs.project_status }}"
+          echo "Current Project status: $STATUS"
+          if [ "$STATUS" = "Done" ]; then
+            echo "Issue is already Done. Stopping."
+            exit 1
+          fi
+          if [ "$STATUS" = "AI Investigating" ] || [ "$STATUS" = "AI Fixing" ] || [ "$STATUS" = "Testing" ] || [ "$STATUS" = "Human Review" ]; then
+            echo "Another healing process may be running (status: $STATUS). Stopping to prevent conflicts."
+            exit 1
+          fi
+          if [ "$STATUS" = "AI Fix Failed" ]; then
+            echo "Previous healing attempt failed. Manual retry required."
+            exit 1
+          fi
+          if [ "$STATUS" != "Todo" ]; then
+            echo "WARNING: Unexpected status '$STATUS', expected 'Todo'. Continuing anyway."
+          fi
+
+      - name: Set Job Outputs
+        id: set-outputs
+        run: |
+          echo "issue_number=${{ steps.read-context.outputs.issue_number }}" >> "$GITHUB_OUTPUT"
+          echo "project_item_id=${{ steps.read-context.outputs.project_item_id }}" >> "$GITHUB_OUTPUT"
+          echo "project_status=${{ steps.read-context.outputs.project_status }}" >> "$GITHUB_OUTPUT"
+          echo "issue_title=${{ steps.read-context.outputs.issue_title }}" >> "$GITHUB_OUTPUT"
+          echo "issue_url=${{ steps.read-context.outputs.issue_url }}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Bug Context
+        uses: actions/upload-artifact@v4
+        with:
+          name: bug-context
+          path: bug-context.json
+          if-no-files-found: error
+          retention-days: 30
+
+  update-project-investigating:
+    name: Move to AI Investigating
+    needs: select-bug
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PROJECT_ITEM_ID: ${{ needs.select-bug.outputs.project_item_id }}
+      TARGET_STATUS: "AI Investigating"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Bug Context
+        uses: actions/download-artifact@v4
+        with:
+          name: bug-context
+          path: .
+
+      - name: Update Project Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          PROJECT_ITEM_ID: ${{ needs.select-bug.outputs.project_item_id }}
+          TARGET_STATUS: "AI Investigating"
+        run: |
+          npx tsx scripts/update-project-status.ts
+
+      - name: Upload Updated Context
+        uses: actions/upload-artifact@v4
+        with:
+          name: bug-context
+          path: bug-context.json
+          if-no-files-found: error
+          retention-days: 30
+
+  create-fix-branch:
+    name: Create Fix Branch
+    needs: update-project-investigating
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      branch_name: ${{ steps.create-branch.outputs.branch_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Bug Context
+        uses: actions/download-artifact@v4
+        with:
+          name: bug-context
+          path: .
+
+      - name: Create Fix Branch
+        id: create-branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ env.DEFAULT_BRANCH }}
+        run: |
+          ISSUE_NUMBER="${{ needs.select-bug.outputs.issue_number }}"
+          ISSUE_TITLE="${{ needs.select-bug.outputs.issue_title }}"
+          SLUG=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g' | cut -c1-50)
+          BRANCH_NAME="fix/issue-${ISSUE_NUMBER}-${SLUG}"
+          
+          git config user.name "AI Bug Healer"
+          git config user.email "ai-bug-healer@github-actions"
+          
+          git fetch origin "${DEFAULT_BRANCH}"
+          git checkout -b "$BRANCH_NAME" "origin/${DEFAULT_BRANCH}"
+          git push origin "$BRANCH_NAME"
+          
+          echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Update AI Fix Summary with Branch
+        run: |
+          if [ -f ai-fix-summary.json ]; then
+            cat ai-fix-summary.json | jq --arg branch "${{ steps.create-branch.outputs.branch_name }}" '.branch = $branch' > ai-fix-summary.json.tmp && mv ai-fix-summary.json.tmp ai-fix-summary.json
+          else
+            echo '{"branch": "${{ steps.create-branch.outputs.branch_name }}", "initialStatus": "Todo", "finalStatus": "Todo", "attempt": 1, "maxAttempts": 2, "filesChanged": [], "linesAdded": 0, "linesDeleted": 0, "targetedTest": "", "targetedTestResult": "pending", "regressionResult": "pending", "pullRequest": null, "pullRequestUrl": null, "reviewStatus": "pending", "mergeStatus": "pending", "postMergeVerification": "pending", "projectCompletion": "Todo"}' > ai-fix-summary.json
+          fi
+
+      - name: Upload AI Fix Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-summary
+          path: ai-fix-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  ai-investigate:
+    name: AI Investigation
+    needs: create-fix-branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+      CONFIDENCE_THRESHOLD: ${{ env.AI_HEAL_CONFIDENCE_THRESHOLD }}
+      ATTEMPT_NUMBER: 1
+      MAX_ATTEMPTS: ${{ env.AI_HEAL_MAX_ATTEMPTS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
+      - name: Run AI Investigation
+        run: |
+          npx tsx scripts/analyse-bug.ts
+
+      - name: Check Confidence
+        id: check-confidence
+        run: |
+          CONFIDENCE=$(cat root-cause.json | jq -r '.confidence')
+          THRESHOLD="${{ env.AI_HEAL_CONFIDENCE_THRESHOLD }}"
+          echo "AI Confidence: $CONFIDENCE (threshold: $THRESHOLD)"
+          if (( $(echo "$CONFIDENCE < $THRESHOLD" | bc -l) )); then
+            echo "confidence_below_threshold=true" >> "$GITHUB_OUTPUT"
+            echo "Confidence below threshold. Will move to AI Fix Failed."
+          else
+            echo "confidence_below_threshold=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Root Cause
+        uses: actions/upload-artifact@v4
+        with:
+          name: root-cause
+          path: root-cause.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload AI Fix Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-summary
+          path: ai-fix-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  update-project-fixing:
+    name: Move to AI Fixing
+    needs: ai-investigate
+    if: needs.ai-investigate.outputs.confidence_below_threshold != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_STATUS: "AI Fixing"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Project Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          TARGET_STATUS: "AI Fixing"
+        run: |
+          npx tsx scripts/update-project-status.ts
+
+      - name: Upload Updated Context
+        uses: actions/upload-artifact@v4
+        with:
+          name: bug-context
+          path: bug-context.json
+          if-no-files-found: error
+          retention-days: 30
+
+  apply-ai-fix:
+    name: Apply AI Fix
+    needs: update-project-fixing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+      CONFIDENCE_THRESHOLD: ${{ env.AI_HEAL_CONFIDENCE_THRESHOLD }}
+      MAX_FILES: ${{ env.AI_HEAL_MAX_FILES }}
+      MAX_ADDED_LINES: ${{ env.AI_HEAL_MAX_ADDED_LINES }}
+      MAX_DELETED_LINES: ${{ env.AI_HEAL_MAX_DELETED_LINES }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
+      - name: Apply AI Fix
+        run: |
+          npx tsx scripts/apply-fix.ts
+
+      - name: Upload Git Diff
+        uses: actions/upload-artifact@v4
+        with:
+          name: git-diff
+          path: git-diff.patch
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload AI Fix Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-summary
+          path: ai-fix-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  validate-ai-patch:
+    name: Validate AI Patch
+    needs: apply-ai-fix
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
+      - name: Validate Patch
+        env:
+          MAX_FILES: ${{ env.AI_HEAL_MAX_FILES }}
+          MAX_ADDED_LINES: ${{ env.AI_HEAL_MAX_ADDED_LINES }}
+          MAX_DELETED_LINES: ${{ env.AI_HEAL_MAX_DELETED_LINES }}
+        run: |
+          npx tsx scripts/validate-patch.ts
+
+      - name: Upload AI Fix Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-summary
+          path: ai-fix-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  update-project-testing:
+    name: Move to Testing
+    needs: validate-ai-patch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_STATUS: "Testing"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Project Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          TARGET_STATUS: "Testing"
+        run: |
+          npx tsx scripts/update-project-status.ts
+
+      - name: Upload Updated Context
+        uses: actions/upload-artifact@v4
+        with:
+          name: bug-context
+          path: bug-context.json
+          if-no-files-found: error
+          retention-days: 30
+
+  targeted-test:
+    name: Run Targeted Test
+    needs: update-project-testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
+      - name: Run Targeted Test
+        env:
+          TEST_WORKERS: "1"
+          TEST_RETRIES: "0"
+        run: |
+          npx tsx scripts/run-targeted-test.ts
+
+      - name: Upload AI Fix Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-summary
+          path: ai-fix-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  full-regression:
+    name: Full Regression
+    needs: targeted-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
+      - name: Run Full Regression
+        run: |
+          npm run test:ci
+
+      - name: Update Regression Result
+        run: |
+          cat ai-fix-summary.json | jq '.regressionResult = "passed"' > ai-fix-summary.json.tmp && mv ai-fix-summary.json.tmp ai-fix-summary.json
+
+      - name: Upload AI Fix Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-summary
+          path: ai-fix-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  create-pull-request:
+    name: Create Pull Request
+    needs: full-regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
+      - name: Create Pull Request
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ env.DEFAULT_BRANCH }}
+        run: |
+          npx tsx scripts/create-pull-request.ts
+
+      - name: Upload AI Fix Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-summary
+          path: ai-fix-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  update-project-review:
+    name: Move to Human Review
+    needs: create-pull-request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_STATUS: "Human Review"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Project Status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          TARGET_STATUS: "Human Review"
+        run: |
+          npx tsx scripts/update-project-status.ts
+
+      - name: Upload Updated Context
+        uses: actions/upload-artifact@v4
+        with:
+          name: bug-context
+          path: bug-context.json
+          if-no-files-found: error
+          retention-days: 30
+
+  wait-for-human-review:
+    name: Wait for Human Review
+    needs: update-project-review
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ env.MAX_WAIT_MINUTES }}
+    env:
+      MAX_WAIT_MINUTES: ${{ env.MAX_WAIT_MINUTES }}
+      POLL_INTERVAL_SECONDS: ${{ env.POLL_INTERVAL_SECONDS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait for Human Review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAX_WAIT_MINUTES: ${{ env.MAX_WAIT_MINUTES }}
+          POLL_INTERVAL_SECONDS: ${{ env.POLL_INTERVAL_SECONDS }}
+        run: |
+          npx tsx scripts/verify-pr.ts
+
+      - name: Check Review Result
+        id: check-review
+        run: |
+          REVIEW_STATUS=$(cat ai-fix-summary.json | jq -r '.reviewStatus')
+          echo "Review status: $REVIEW_STATUS"
+          if [ "$REVIEW_STATUS" = "approved" ]; then
+            echo "review_approved=true" >> "$GITHUB_OUTPUT"
+          elif [ "$REVIEW_STATUS" = "changes_requested" ]; then
+            echo "review_approved=false" >> "$GITHUB_OUTPUT"
+            echo "changes_requested=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "review_approved=false" >> "$GITHUB_OUTPUT"
+            echo "timeout=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload AI Fix Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-summary
+          path: ai-fix-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  verify-merged-fix:
+    name: Verify Merged Fix
+    needs: wait-for-human-review
+    if: needs.wait-for-human-review.outputs.review_approved == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Merge and Post-Merge Tests
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ env.DEFAULT_BRANCH }}
+        run: |
+          npx tsx scripts/verify-merge.ts
+
+      - name: Upload AI Fix Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-summary
+          path: ai-fix-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
+  update-project-done:
+    name: Move to Done
+    needs: verify-merged-fix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_STATUS: "Done"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move Project to Done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          TARGET_STATUS: "Done"
+        run: |
+          npx tsx scripts/verify-post-merge.ts
+
+      - name: Upload Final Evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-healing-evidence
+          path: |
+            ai-healing-evidence/
+            bug-context.json
+            root-cause.json
+            ai-fix-summary.json
+            git-diff.patch
+            project-status-transitions.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Print Final Summary
+        run: |
+          echo "=========================================="
+          echo "AI Bug Healing Complete"
+          echo "=========================================="
+          cat ai-fix-summary.json | jq .
+          echo "=========================================="
+          cat project-status-transitions.json | jq .
+          echo "=========================================="
+
+  handle-failure:
+    name: Handle Failure
+    needs: [ai-investigate, apply-ai-fix, targeted-test, full-regression, wait-for-human-review]
+    if: |
+      always() &&
+      (needs.ai-investigate.outputs.confidence_below_threshold == 'true' ||
+       needs.apply-ai-fix.result == 'failure' ||
+       needs.targeted-test.result == 'failure' ||
+       needs.full-regression.result == 'failure' ||
+       needs.wait-for-human-review.outputs.changes_requested == 'true' ||
+       needs.wait-for-human-review.outputs.timeout == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_STATUS: "AI Fix Failed"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move to AI Fix Failed
+        if: needs.ai-investigate.outputs.confidence_below_threshold == 'true' || needs.apply-ai-fix.result == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          TARGET_STATUS: "AI Fix Failed"
+        run: |
+          npx tsx scripts/update-project-status.ts
+          echo "Moved to AI Fix Failed due to low confidence or fix application failure"
+
+      - name: Move back to AI Fixing for retry
+        if: needs.targeted-test.result == 'failure' || needs.full-regression.result == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          TARGET_STATUS: "AI Fixing"
+        run: |
+          npx tsx scripts/update-project-status.ts
+          echo "Moved back to AI Fixing for retry"
+
+      - name: Handle Review Rejection
+        if: needs.wait-for-human-review.outputs.changes_requested == 'true'
+        run: |
+          echo "Human requested changes on PR. Manual intervention required."
+          echo "Project status remains at Human Review for manual rework."
+
+      - name: Handle Review Timeout
+        if: needs.wait-for-human-review.outputs.timeout == 'true'
+        run: |
+          echo "Timeout waiting for human review. PR is still open awaiting review."
+          echo "Project status remains at Human Review."
