@@ -8,14 +8,20 @@ import { join } from 'node:path';
  *
  * GitHub's download-artifact action creates a `<artifact-name>/` subdirectory
  * when no `name` filter is supplied, so `bug-context.json` can end up at
- * `bug-context/bug-context.json`. Scripts must handle both layouts.
+ * `bug-context/bug-context.json`. The subfolder is named after the artifact
+ * name (the filename minus its extension), so the fallback strips the
+ * extension before joining.
  */
 export function resolveArtifactPath(rootDir: string, filename: string): string {
   const direct = join(rootDir, filename);
   if (existsSync(direct)) return direct;
 
   // Fall back to the per-artifact subdirectory layout.
-  const subdir = join(rootDir, filename, filename);
+  // The artifact name is the filename without its extension (e.g.
+  // `bug-context` for `bug-context.json`, `git-diff` for `git-diff.patch`).
+  const lastDot = filename.lastIndexOf('.');
+  const artifactName = lastDot > 0 ? filename.slice(0, lastDot) : filename;
+  const subdir = join(rootDir, artifactName, filename);
   if (existsSync(subdir)) return subdir;
 
   return direct;
