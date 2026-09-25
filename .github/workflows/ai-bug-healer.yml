@@ -306,16 +306,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: .
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout Fix Branch
-        run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
 
       - name: Run AI Investigation
         run: |
@@ -423,16 +423,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: .
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout Fix Branch
-        run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
 
       - name: Apply AI Fix
         run: |
@@ -475,16 +475,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: .
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout Fix Branch
-        run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
 
       - name: Validate Patch
         env:
@@ -570,16 +570,16 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: .
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout Fix Branch
-        run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
 
       - name: Run Targeted Test
         env:
@@ -620,16 +620,16 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: .
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout Fix Branch
-        run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
 
       - name: Run Full Regression
         run: |
@@ -668,16 +668,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Checkout Fix Branch
+        run: |
+          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: .
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout Fix Branch
-        run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
 
       - name: Create Pull Request
         env:
