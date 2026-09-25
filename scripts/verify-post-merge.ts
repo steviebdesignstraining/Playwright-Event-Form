@@ -7,6 +7,7 @@ import {
   getStatusField,
   getStatusOptionId,
   updateItemStatus,
+  resolveArtifactPath,
   getRepoInfo,
 } from './github-project.js';
 
@@ -47,7 +48,7 @@ interface StatusTransitionLog {
 }
 
 function loadAiFixSummary(): AiFixSummary {
-  const path = join(rootDir, 'ai-fix-summary.json');
+  const path = resolveArtifactPath(rootDir, 'ai-fix-summary.json');
   if (!existsSync(path)) {
     console.error('ai-fix-summary.json not found.');
     process.exit(1);
@@ -56,7 +57,7 @@ function loadAiFixSummary(): AiFixSummary {
 }
 
 function saveAiFixSummary(summary: AiFixSummary): void {
-  const path = join(rootDir, 'ai-fix-summary.json');
+  const path = resolveArtifactPath(rootDir, 'ai-fix-summary.json');
   writeFileSync(path, JSON.stringify(summary, null, 2));
 }
 

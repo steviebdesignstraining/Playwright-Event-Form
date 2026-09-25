@@ -3,6 +3,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { setFieldValue } from './github-project.js';
+import { resolveArtifactPath } from './github-project.js';
 
 interface CreatedIssue {
   number: number;
@@ -65,7 +66,7 @@ function getRepoInfo(): { owner: string; repo: string } {
 }
 
 function loadCreatedIssues(): IssueWithMetadata[] {
-  const path = join(rootDir, 'created-issues.json');
+  const path = resolveArtifactPath(rootDir, 'created-issues.json');
   if (!existsSync(path)) {
     console.error('No created-issues.json found. Run create-github-issue.ts first.');
     process.exit(1);

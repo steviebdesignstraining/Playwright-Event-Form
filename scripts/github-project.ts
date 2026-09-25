@@ -1,4 +1,33 @@
 import { execSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+/**
+ * Resolves an artifact file path that may live either at the repository root
+ * or inside a per-artifact subdirectory created by actions/download-artifact@v4.
+ *
+ * GitHub's download-artifact action creates a `<artifact-name>/` subdirectory
+ * when no `name` filter is supplied, so `bug-context.json` can end up at
+ * `bug-context/bug-context.json`. Scripts must handle both layouts.
+ */
+export function resolveArtifactPath(rootDir: string, filename: string): string {
+  const direct = join(rootDir, filename);
+  if (existsSync(direct)) return direct;
+
+  // Fall back to the per-artifact subdirectory layout.
+  const subdir = join(rootDir, filename, filename);
+  if (existsSync(subdir)) return subdir;
+
+  return direct;
+}
+
+export function readArtifactJson<T>(rootDir: string, filename: string): T {
+  const path = resolveArtifactPath(rootDir, filename);
+  if (!existsSync(path)) {
+    throw new Error(`${filename} not found at ${path}. Run the preceding step first.`);
+  }
+  return JSON.parse(readFileSync(path, 'utf-8')) as T;
+}
 
 export interface ProjectField {
   id: string;

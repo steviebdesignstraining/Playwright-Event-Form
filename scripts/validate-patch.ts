@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { resolveArtifactPath } from './github-project.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
@@ -45,7 +46,7 @@ const FORBIDDEN_PATTERNS = [
 const ALLOWED_TEST_FILES = ['e2e/tests/', 'e2e/fixtures/', 'e2e/pages/', 'e2e/selectors/'];
 
 function loadAiFixSummary(): AiFixSummary {
-  const path = join(rootDir, 'ai-fix-summary.json');
+  const path = resolveArtifactPath(rootDir, 'ai-fix-summary.json');
   if (!existsSync(path)) {
     return {
       issueNumber: 0,
@@ -75,7 +76,7 @@ function loadAiFixSummary(): AiFixSummary {
 }
 
 function saveAiFixSummary(summary: AiFixSummary): void {
-  const path = join(rootDir, 'ai-fix-summary.json');
+  const path = resolveArtifactPath(rootDir, 'ai-fix-summary.json');
   writeFileSync(path, JSON.stringify(summary, null, 2));
 }
 

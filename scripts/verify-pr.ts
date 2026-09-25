@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveArtifactPath } from './github-project.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
@@ -92,7 +93,7 @@ async function getPrStatus(token: string, owner: string, repo: string, prNumber:
 }
 
 function loadAiFixSummary(): AiFixSummary {
-  const path = join(rootDir, 'ai-fix-summary.json');
+  const path = resolveArtifactPath(rootDir, 'ai-fix-summary.json');
   if (!existsSync(path)) {
     console.error('ai-fix-summary.json not found.');
     process.exit(1);
@@ -101,7 +102,7 @@ function loadAiFixSummary(): AiFixSummary {
 }
 
 function saveAiFixSummary(summary: AiFixSummary): void {
-  const path = join(rootDir, 'ai-fix-summary.json');
+  const path = resolveArtifactPath(rootDir, 'ai-fix-summary.json');
   writeFileSync(path, JSON.stringify(summary, null, 2));
 }
 

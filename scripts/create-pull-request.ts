@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { resolveArtifactPath } from './github-project.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
@@ -51,7 +52,7 @@ interface RootCauseAnalysis {
 }
 
 function loadAiFixSummary(): AiFixSummary {
-  const path = join(rootDir, 'ai-fix-summary.json');
+  const path = resolveArtifactPath(rootDir, 'ai-fix-summary.json');
   if (!existsSync(path)) {
     return {
       issueNumber: 0,
@@ -81,12 +82,12 @@ function loadAiFixSummary(): AiFixSummary {
 }
 
 function saveAiFixSummary(summary: AiFixSummary): void {
-  const path = join(rootDir, 'ai-fix-summary.json');
+  const path = resolveArtifactPath(rootDir, 'ai-fix-summary.json');
   writeFileSync(path, JSON.stringify(summary, null, 2));
 }
 
 function loadBugContext(): BugContext {
-  const path = join(rootDir, 'bug-context.json');
+  const path = resolveArtifactPath(rootDir, 'bug-context.json');
   if (!existsSync(path)) {
     console.error('bug-context.json not found.');
     process.exit(1);
@@ -95,7 +96,7 @@ function loadBugContext(): BugContext {
 }
 
 function loadRootCause(): RootCauseAnalysis {
-  const path = join(rootDir, 'root-cause.json');
+  const path = resolveArtifactPath(rootDir, 'root-cause.json');
   if (!existsSync(path)) {
     return {
       rootCause: 'Unknown',

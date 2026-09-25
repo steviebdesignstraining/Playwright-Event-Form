@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveArtifactPath } from './github-project.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
@@ -146,7 +147,7 @@ async function callGemini(apiKey: string, systemPrompt: string, userPrompt: stri
 }
 
 function loadBugContext(): BugContext {
-  const path = join(rootDir, 'bug-context.json');
+  const path = resolveArtifactPath(rootDir, 'bug-context.json');
   if (!existsSync(path)) {
     console.error('bug-context.json not found. Run fetch-issue.ts first.');
     process.exit(1);
@@ -155,7 +156,7 @@ function loadBugContext(): BugContext {
 }
 
 function loadFailureData(): unknown {
-  const path = join(rootDir, 'failure-data.json');
+  const path = resolveArtifactPath(rootDir, 'failure-data.json');
   if (!existsSync(path)) {
     return null;
   }

@@ -7,6 +7,7 @@ import {
   getStatusField,
   ensureStatusOption,
   updateItemStatus,
+  resolveArtifactPath,
   getRepoInfo,
 } from './github-project.js';
 
@@ -63,7 +64,7 @@ async function main() {
     process.exit(1);
   }
 
-  const bugContextPath = join(rootDir, 'bug-context.json');
+  const bugContextPath = resolveArtifactPath(rootDir, 'bug-context.json');
   if (!existsSync(bugContextPath)) {
     console.error('bug-context.json not found. Run fetch-issue.ts first.');
     process.exit(1);
