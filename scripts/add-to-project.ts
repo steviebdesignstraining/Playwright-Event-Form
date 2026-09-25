@@ -413,9 +413,9 @@ async function setFieldValue(
 async function main() {
   console.log('Adding issues to GitHub Project...');
 
-  const token = process.env.GITHUB_TOKEN;
+  const token = process.env.PROJECT_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) {
-    console.error('GITHUB_TOKEN environment variable is not set.');
+    console.error('PROJECT_TOKEN or GITHUB_TOKEN environment variable is not set.');
     process.exit(1);
   }
 
