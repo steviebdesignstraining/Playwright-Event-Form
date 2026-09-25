@@ -24,3 +24,6 @@ created-issues.json
 .idea/
 .vscode/
 *.swp
+
+# Local scratch / prompt notes (not part of the repo)
+Workflow Prompt/
