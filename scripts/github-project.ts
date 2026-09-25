@@ -292,11 +292,18 @@ export async function getProjectItemByIssueNumber(
   repo: string,
   issueNumber: number
 ): Promise<ProjectItem | null> {
+  // Match against the issue's own `projectItems` list, filtered by projectId
+  // below. The project can hold far more items than any fixed page size, and
+  // this issue's item isn't guaranteed to fall within an arbitrary first-N
+  // page of the project's `items` connection — scanning that list is both
+  // slower and unreliable at scale. The issue's own (small, bounded) list of
+  // project memberships is correct regardless of board size.
   const query = `
-    query($projectId: ID!, $owner: String!, $repo: String!, $number: Int!) {
+    query($owner: String!, $repo: String!, $number: Int!) {
       repository(owner: $owner, name: $repo) {
         issue(number: $number) {
           id
+          number
           title
           state
           url
@@ -305,24 +312,6 @@ export async function getProjectItemByIssueNumber(
               id
               project {
                 id
-              }
-            }
-          }
-        }
-      }
-      node(id: $projectId) {
-        ... on ProjectV2 {
-          items(first: 50) {
-            nodes {
-              id
-              content {
-                __typename
-                ... on Issue {
-                  number
-                  title
-                  state
-                  url
-                }
               }
               fieldValues(first: 20) {
                 nodes {
@@ -343,24 +332,22 @@ export async function getProjectItemByIssueNumber(
     }
   `;
 
-  const result = await graphqlRequest(token, query, { projectId, owner, repo, number: issueNumber }) as {
+  const result = await graphqlRequest(token, query, { owner, repo, number: issueNumber }) as {
     repository?: {
       issue?: {
         id: string;
+        number: number;
         title: string;
         state: string;
         url: string;
-        projectItems?: { nodes: Array<{ id: string; project: { id: string } }> };
+        projectItems?: {
+          nodes: Array<{
+            id: string;
+            project: { id: string };
+            fieldValues: { nodes: Array<{ field?: { name: string }; name?: string }> };
+          }>;
+        };
       } | null;
-    } | null;
-    node?: {
-      items?: {
-        nodes: Array<{
-          id: string;
-          content: { __typename: string; number: number; title: string; state: string; url: string } | null;
-          fieldValues: { nodes: Array<{ field?: { name: string }; name?: string }> };
-        }>;
-      };
     } | null;
   } | null;
 
@@ -369,11 +356,7 @@ export async function getProjectItemByIssueNumber(
     return null;
   }
 
-  const projectItems = result?.node?.items?.nodes ?? [];
-  const matchingItem = projectItems.find(
-    item => item.content && item.content.__typename === 'Issue' && item.content.number === issueNumber
-  );
-
+  const matchingItem = issue.projectItems?.nodes.find(item => item.project.id === projectId);
   if (!matchingItem) {
     return null;
   }
