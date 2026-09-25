@@ -5,7 +5,7 @@ import {
   findProject,
   getProjectItemByIssueNumber,
   getStatusField,
-  getStatusOptionId,
+  ensureStatusOption,
   updateItemStatus,
   getRepoInfo,
 } from './github-project.js';
@@ -150,9 +150,9 @@ async function main() {
 
   console.log(`Status field ID: ${statusField.id}`);
 
-  const statusOptionId = getStatusOptionId(statusField, targetStatus);
+  const statusOptionId = await ensureStatusOption(token, project.id, statusField, targetStatus);
   if (!statusOptionId) {
-    console.error(`Status option "${targetStatus}" not found in project. Available options: ${statusField.options?.map(o => o.name).join(', ') || 'none'}`);
+    console.error(`Status option "${targetStatus}" could not be found or created. Available options: ${statusField.options?.map(o => o.name).join(', ') || 'none'}`);
     const log: StatusTransitionLog = {
       issueNumber,
       fromStatus: currentStatus,
