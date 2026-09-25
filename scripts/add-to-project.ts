@@ -212,38 +212,42 @@ async function findProject(
     return { id: userProject.id, title: userProject.title, fields: userProject.fields.nodes };
   }
 
-  // 2. Try organization-level project (using projectV2ByName)
-  const orgQuery = `
-    query($owner: String!, $projectName: String!) {
+  // 2. Try organization-level project by listing and matching name
+  // (projectV2ByName is not available on Organization in the current GraphQL schema)
+  const orgListQuery = `
+    query($owner: String!) {
       organization(login: $owner) {
-        projectV2ByName(name: $projectName) {
-          ${projectFieldsFragment}
+        projectsV2(first: 100) {
+          nodes {
+            ${projectFieldsFragment}
+          }
         }
       }
     }
   `;
 
-  type OrgResult = {
+  type OrgListResult = {
     organization?: {
-      projectV2ByName?: {
-        id: string;
-        title: string;
-        fields: { nodes: ProjectField[] };
-      } | null;
+      projectsV2?: {
+        nodes: Array<{ id: string; title: string; fields: { nodes: ProjectField[] } }>;
+      };
     } | null;
   };
 
-  let orgResult: OrgResult | null = null;
+  let orgListResult: OrgListResult | null = null;
   try {
-    orgResult = await graphqlRequest(token, orgQuery, { owner, projectName }) as OrgResult;
+    orgListResult = await graphqlRequest(token, orgListQuery, { owner }) as OrgListResult;
   } catch (error) {
-    console.warn(`  → Organization lookup skipped: ${error instanceof Error ? error.message : error}`);
+    console.warn(`  → Organization project listing skipped: ${error instanceof Error ? error.message : error}`);
   }
 
-  if (orgResult?.organization?.projectV2ByName) {
-    const project = orgResult.organization.projectV2ByName;
-    console.log(`  → Found project "${projectName}" under organization ${owner}`);
-    return { id: project.id, title: project.title, fields: project.fields.nodes };
+  if (orgListResult?.organization?.projectsV2?.nodes) {
+    const orgProjects = orgListResult.organization.projectsV2.nodes;
+    const orgProject = orgProjects.find(p => normaliseTitle(p.title) === normaliseTitle(projectName));
+    if (orgProject) {
+      console.log(`  → Found project "${projectName}" under organization ${owner}`);
+      return { id: orgProject.id, title: orgProject.title, fields: orgProject.fields.nodes };
+    }
   }
 
   // 3. Try repository-level project (Repository does not have projectV2ByName, use projectsV2 + title filter)
