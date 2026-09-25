@@ -541,7 +541,20 @@ export async function setFieldValue(
   let variables: Record<string, unknown>;
 
   if (field.type === 'SINGLE_SELECT' && field.options) {
-    const option = field.options.find(o => o.name === value);
+    let option = field.options.find(o => o.name === value);
+    if (!option) {
+      // Auto-create the missing option so the value can be set.
+      // This keeps the workflow self-healing for custom option vocabularies.
+      try {
+        const newId = await ensureStatusOption(token, projectId, field, value);
+        if (newId) {
+          option = { id: newId, name: value };
+          field.options.push(option);
+        }
+      } catch {
+        // Fall through to the warn below.
+      }
+    }
     if (!option) {
       console.warn(`  → Option "${value}" not found for field "${field.name}"`);
       return;
