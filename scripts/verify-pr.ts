@@ -154,6 +154,8 @@ async function main() {
   console.log(`Waiting up to ${maxWaitMinutes} minutes for human review and merge...`);
   console.log(`Polling every ${pollIntervalSeconds} seconds.`);
 
+  let finalStatus = 'timeout';
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     console.log(`\nCheck ${attempt}/${maxAttempts}...`);
 
@@ -169,7 +171,8 @@ async function main() {
         summary.mergeStatus = 'merged';
         summary.reviewStatus = 'approved';
         saveAiFixSummary(summary);
-        process.exit(0);
+        finalStatus = 'merged';
+        break;
       }
 
       if (status.state === 'CLOSED') {
@@ -177,14 +180,16 @@ async function main() {
         summary.mergeStatus = 'closed';
         summary.reviewStatus = 'dismissed';
         saveAiFixSummary(summary);
-        process.exit(1);
+        finalStatus = 'closed';
+        break;
       }
 
       if (status.reviewDecision === 'CHANGES_REQUESTED') {
         console.log('\n⚠️ Changes requested on PR.');
         summary.reviewStatus = 'changes_requested';
         saveAiFixSummary(summary);
-        process.exit(2);
+        finalStatus = 'changes_requested';
+        break;
       }
 
       if (status.reviewDecision === 'APPROVED') {
@@ -202,9 +207,14 @@ async function main() {
     }
   }
 
-  console.log('\n⏱️ Timeout waiting for human review and merge.');
-  console.log('The PR is still open and awaiting review/merge.');
-  process.exit(3);
+  if (finalStatus === 'timeout') {
+    console.log('\n⏱️ Timeout waiting for human review and merge.');
+    console.log('The PR is still open and awaiting review/merge.');
+  }
+
+  // Always exit 0 - the check-review step reads the summary file to determine outcome
+  console.log(`\nFinal status: ${finalStatus}`);
+  process.exit(0);
 }
 
 main().catch(error => {

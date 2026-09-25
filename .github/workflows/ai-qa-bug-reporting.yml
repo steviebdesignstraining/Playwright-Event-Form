@@ -647,6 +647,7 @@ jobs:
           echo "Issue numbers: $ISSUE_NUMBERS"
 
           gh workflow run ai-bug-healer.yml \
+            --repo "${{ github.repository }}" \
             --ref "${{ github.event.repository.default_branch || 'main' }}" \
             -f issue_numbers="$ISSUE_NUMBERS"
 
