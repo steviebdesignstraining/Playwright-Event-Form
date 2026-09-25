@@ -975,7 +975,7 @@ jobs:
           echo "Timeout waiting for human review. PR is still open awaiting review."
           echo "Project status remains at Human Review."
 
-dispatch-next:
+  dispatch-next:
     name: Dispatch Next Bug
     needs: [select-bug, update-project-done, handle-failure]
     if: always() && needs.select-bug.outputs.remaining_issues != ''
