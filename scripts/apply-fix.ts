@@ -184,7 +184,8 @@ function sleep(ms: number): Promise<void> {
 function parseRetryDelay(responseText: string): number {
   try {
     const body = JSON.parse(responseText);
-    const retryInfo = body.error?.details?.find(
+    const errorObj = Array.isArray(body) ? body[0] : body;
+    const retryInfo = errorObj?.error?.details?.find(
       (d: any) => d['@type'] === 'type.googleapis.com/google.rpc.RetryInfo'
     );
     if (retryInfo?.retryDelay) {
@@ -258,11 +259,14 @@ async function callGemini(
   if (!response.ok) {
     if (response.status === 429) {
       const retryInfo = parseRetryDelay(responseText);
-      const delayMs = Math.min(Math.max(retryInfo, 1000), 120_000);
-      console.warn(`Gemini rate-limited (429). Retrying in ${delayMs / 1000}s...`);
+      const backoffDelay = retryInfo * attempt;
+      const delayMs = Math.min(Math.max(backoffDelay, 1000), 180_000);
+      console.warn(`Gemini rate-limited (429). Retrying in ${delayMs / 1000}s (attempt ${attempt}/${maxAttempts})...`);
       await sleep(delayMs);
       if (attempt >= maxAttempts) {
-        throw new Error(`Gemini API rate-limited (429) after ${attempt} retries. Retry delay: ${retryInfo}ms. ${responseText}`);
+        const retryAfterMatch = responseText.match(/"retryDelay":\s*"([\d.]+)s"/);
+        const retryAfter = retryAfterMatch ? `${retryAfterMatch[1]}s` : 'unknown';
+        throw new Error(`Gemini API rate-limited (429) after ${attempt} retries. Server suggests retry after ${retryAfter}. Quota: ${responseText.includes('generate_content') ? 'daily free tier exhausted' : 'rate limited'}.`);
       }
       return callGemini(apiKey, systemPrompt, userPrompt, attempt + 1, maxAttempts);
     }
