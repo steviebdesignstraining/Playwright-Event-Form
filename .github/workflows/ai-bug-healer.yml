@@ -1053,14 +1053,16 @@ jobs:
 
   handle-failure:
     name: Handle Failure
-    needs: [ai-investigate, retry-ai-investigate, apply-ai-fix, targeted-test, full-regression, wait-for-human-review, verify-merged-fix]
+    needs: [create-fix-branch, update-project-fixing, ai-investigate, retry-ai-investigate, apply-ai-fix, targeted-test, full-regression, wait-for-human-review, verify-merged-fix]
     if: |
       always() &&
       (needs.ai-investigate.result == 'failure' ||
        needs.retry-ai-investigate.result == 'failure' ||
        needs.ai-investigate.result == 'skipped' ||
-       needs.retry-ai-investigate.result == 'skipped' ||
+       needs.create-fix-branch.result == 'failure' ||
+       needs.update-project-fixing.result == 'failure' ||
        needs.apply-ai-fix.result == 'failure' ||
+       needs.apply-ai-fix.result == 'skipped' ||
        needs.targeted-test.result == 'failure' ||
        needs.full-regression.result == 'failure' ||
        needs.verify-merged-fix.result == 'failure' ||
@@ -1096,8 +1098,10 @@ jobs:
           needs.ai-investigate.result == 'failure' ||
           needs.retry-ai-investigate.result == 'failure' ||
           needs.ai-investigate.result == 'skipped' ||
-          needs.retry-ai-investigate.result == 'skipped' ||
+          needs.create-fix-branch.result == 'failure' ||
+          needs.update-project-fixing.result == 'failure' ||
           needs.apply-ai-fix.result == 'failure' ||
+          needs.apply-ai-fix.result == 'skipped' ||
           needs.verify-merged-fix.result == 'failure'
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
