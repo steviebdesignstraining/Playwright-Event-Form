@@ -137,9 +137,14 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "$STATUS" = "AI Investigating" ] || [ "$STATUS" = "AI Fixing" ] || [ "$STATUS" = "Testing" ] || [ "$STATUS" = "Human Review" ]; then
+          if [ "$STATUS" = "AI Investigating" ] || [ "$STATUS" = "Testing" ] || [ "$STATUS" = "Human Review" ]; then
             echo "Another healing process may be running (status: $STATUS). Skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$STATUS" = "AI Fixing" ]; then
+            echo "Issue is in AI Fixing status. This is a retry from a previous test failure. Continuing."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "$STATUS" = "AI Fix Failed" ]; then

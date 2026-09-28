@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveArtifactPath } from './github-project.js';
@@ -250,6 +250,8 @@ function loadTestFile(testName: string): string {
     join(rootDir, 'e2e', 'tests', 'browser.spec.ts'),
     join(rootDir, 'e2e', 'tests', 'api.spec.ts'),
     join(rootDir, 'e2e', 'tests', 'usability.spec.ts'),
+    join(rootDir, 'e2e', 'tests', 'accessibility.spec.ts'),
+    join(rootDir, 'e2e', 'tests', 'security.spec.ts'),
   ];
 
   for (const path of possiblePaths) {
@@ -263,32 +265,70 @@ function loadTestFile(testName: string): string {
 }
 
 function loadApplicationCode(): string {
-  const paths = [
-    join(rootDir, 'src', 'server', 'index.ts'),
-    join(rootDir, 'src', 'server', 'store.ts'),
-    join(rootDir, 'src', 'server', 'types.ts'),
-    join(rootDir, 'src', 'client', 'app.ts'),
-  ];
+  const srcDir = join(rootDir, 'src');
+  if (!existsSync(srcDir)) {
+    return '';
+  }
+  const files = collectFiles(srcDir, '.ts');
   let result = '';
-  for (const path of paths) {
+  for (const path of files) {
     if (existsSync(path)) {
-      result += `\n--- ${path} ---\n`;
+      result += `\n--- ${relativePath(path)} ---\n`;
       result += readFileSync(path, 'utf-8');
     }
   }
   return result;
 }
 
+function collectFiles(dir: string, ext: string): string[] {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectFiles(fullPath, ext));
+    } else if (entry.isFile() && entry.name.endsWith(ext)) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+function relativePath(filePath: string): string {
+  return filePath.split(rootDir + '/').pop() || filePath;
+}
+
 function loadPageObjects(): string {
-  const paths = [
-    join(rootDir, 'e2e', 'pages', 'index.page.ts'),
-    join(rootDir, 'e2e', 'pages', 'api.pages.ts'),
+  const pagesDir = join(rootDir, 'e2e', 'pages');
+  if (!existsSync(pagesDir)) {
+    return '';
+  }
+  const files = collectFiles(pagesDir, '.ts');
+  let result = '';
+  for (const path of files) {
+    if (existsSync(path)) {
+      result += `\n--- ${relativePath(path)} ---\n`;
+      result += readFileSync(path, 'utf-8');
+    }
+  }
+  return result;
+}
+
+function loadTestData(): string {
+  const testDataDirs = [
+    join(rootDir, 'e2e', 'test-data'),
+    join(rootDir, 'e2e', 'fixtures'),
+    join(rootDir, 'e2e', 'selectors'),
   ];
   let result = '';
-  for (const path of paths) {
-    if (existsSync(path)) {
-      result += `\n--- ${path} ---\n`;
-      result += readFileSync(path, 'utf-8');
+  for (const dir of testDataDirs) {
+    if (!existsSync(dir)) continue;
+    const files = collectFiles(dir, '.ts');
+    for (const path of files) {
+      if (existsSync(path)) {
+        result += `\n--- ${relativePath(path)} ---\n`;
+        result += readFileSync(path, 'utf-8');
+      }
     }
   }
   return result;
@@ -334,6 +374,7 @@ Priority: ${failure.priority}
 
   evidence += `\n--- Application Source Code ---\n${loadApplicationCode()}\n`;
   evidence += `\n--- Page Objects ---\n${loadPageObjects()}\n`;
+  evidence += `\n--- Test Data & Selectors ---\n${loadTestData()}\n`;
 
   return evidence;
 }
