@@ -273,19 +273,35 @@ async function callGemini(
   const responseText = await response.text();
 
   if (!response.ok) {
-    if (response.status === 429) {
-      if (isDailyQuotaError(responseText)) {
-        const models = resolveModelChain();
-        const nextModelIndex = models.indexOf(model) + 1;
-        if (nextModelIndex < models.length) {
-          const nextModel = models[nextModelIndex];
-          console.warn(`Gemini daily quota exhausted for ${model}. Switching to fallback model: ${nextModel}`);
-          return callGemini(apiKey, systemPrompt, userPrompt, nextModel, 1, maxAttempts);
-        }
+    const isDailyQuota = response.status === 429 && isDailyQuotaError(responseText);
+    const isServiceUnavailable = response.status === 503 || (response.status >= 500 && response.status < 600);
+
+    if (isDailyQuota || isServiceUnavailable) {
+      const models = resolveModelChain();
+      const nextModelIndex = models.indexOf(model) + 1;
+      if (nextModelIndex < models.length) {
+        const nextModel = models[nextModelIndex];
+        const reason = isDailyQuota
+          ? `daily quota exhausted for ${model}`
+          : `${model} returned ${response.status}`;
+        console.warn(`Gemini ${reason}. Switching to fallback model: ${nextModel}`);
+        return callGemini(apiKey, systemPrompt, userPrompt, nextModel, 1, maxAttempts);
+      }
+      if (isDailyQuota) {
         const retryAfterMatch = responseText.match(/"retryDelay":\s*"([\d.]+)s"/);
         const retryAfter = retryAfterMatch ? `${retryAfterMatch[1]}s` : 'unknown';
         throw new Error(`Gemini daily quota exhausted for all models (${models.join(', ')}). Retry after: ${retryAfter}.`);
       }
+      const backoffDelay = RETRY_BASE_DELAY_MS * attempt;
+      const delayMs = Math.min(Math.max(backoffDelay, 1000), 180_000);
+      console.warn(`Gemini service unavailable (${response.status}). Retrying in ${delayMs / 1000}s (attempt ${attempt}/${maxAttempts})...`);
+      await sleep(delayMs);
+      if (attempt >= maxAttempts) {
+        throw new Error(`Gemini API service unavailable (${response.status}) after ${attempt} retries.`);
+      }
+      return callGemini(apiKey, systemPrompt, userPrompt, model, attempt + 1, maxAttempts);
+    }
+    if (response.status === 429) {
       const retryInfo = parseRetryDelay(responseText);
       const backoffDelay = retryInfo * attempt;
       const delayMs = Math.min(Math.max(backoffDelay, 1000), 180_000);
