@@ -460,7 +460,6 @@ jobs:
 
     if: |
       always() &&
-      needs.run-tests.result == 'success' &&
       needs.create-issue.result == 'success' &&
       needs.create-issue.outputs.issues_created == 'true'
 
@@ -613,6 +612,7 @@ jobs:
       - add-to-project
 
     if: |
+      always() &&
       needs.create-issue.result == 'success' &&
       needs.create-issue.outputs.issues_created == 'true'
 
