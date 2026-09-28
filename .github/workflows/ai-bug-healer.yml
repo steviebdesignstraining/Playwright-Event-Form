@@ -365,10 +365,96 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  retry-ai-investigate:
+    name: Retry AI Investigation
+    needs: ai-investigate
+    if: needs.ai-investigate.outputs.confidence_below_threshold == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      confidence_below_threshold: ${{ steps.check-confidence.outputs.confidence_below_threshold }}
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+      CONFIDENCE_THRESHOLD: ${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD_RETRY || '0.50' }}
+      ATTEMPT_NUMBER: 2
+      MAX_ATTEMPTS: ${{ vars.AI_HEAL_MAX_ATTEMPTS || '2' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Checkout Fix Branch
+        env:
+          BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
+        run: |
+          if [ -z "$BRANCH_NAME" ]; then
+            echo "ERROR: create-fix-branch did not provide a branch name (empty output)."
+            exit 1
+          fi
+          git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}"
+          git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+          merge-multiple: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retry AI Investigation
+        run: |
+          npx tsx scripts/analyse-bug.ts
+
+      - name: Check Confidence
+        id: check-confidence
+        run: |
+          CONFIDENCE=$(cat root-cause.json | jq -r '.confidence')
+          THRESHOLD="${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD_RETRY || '0.50' }}"
+          echo "AI Confidence (retry): $CONFIDENCE (retry threshold: $THRESHOLD)"
+          if (( $(echo "$CONFIDENCE < $THRESHOLD" | bc -l) )); then
+            echo "confidence_below_threshold=true" >> "$GITHUB_OUTPUT"
+            echo "Confidence still below retry threshold. Will move to AI Fix Failed."
+          else
+            echo "confidence_below_threshold=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Retry Root Cause
+        uses: actions/upload-artifact@v4
+        with:
+          name: root-cause
+          path: root-cause.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload AI Fix Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fix-summary
+          path: ai-fix-summary.json
+          if-no-files-found: error
+          retention-days: 30
+
   update-project-fixing:
     name: Move to AI Fixing
-    needs: ai-investigate
-    if: needs.ai-investigate.outputs.confidence_below_threshold != 'true'
+    needs: [ai-investigate, retry-ai-investigate]
+    if: |
+      always() && (
+        (needs.ai-investigate.result == 'success' && needs.ai-investigate.outputs.confidence_below_threshold != 'true') ||
+        (needs.retry-ai-investigate.result == 'success' && needs.retry-ai-investigate.outputs.confidence_below_threshold != 'true')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -971,10 +1057,11 @@ jobs:
 
   handle-failure:
     name: Handle Failure
-    needs: [ai-investigate, apply-ai-fix, targeted-test, full-regression, wait-for-human-review, verify-merged-fix]
+    needs: [ai-investigate, retry-ai-investigate, apply-ai-fix, targeted-test, full-regression, wait-for-human-review, verify-merged-fix]
     if: |
       always() &&
       (needs.ai-investigate.outputs.confidence_below_threshold == 'true' ||
+       needs.retry-ai-investigate.outputs.confidence_below_threshold == 'true' ||
        needs.ai-investigate.result == 'failure' ||
        needs.ai-investigate.result == 'skipped' ||
        needs.apply-ai-fix.result == 'failure' ||
@@ -1011,6 +1098,7 @@ jobs:
       - name: Move to AI Fix Failed
         if: |
           needs.ai-investigate.outputs.confidence_below_threshold == 'true' ||
+          needs.retry-ai-investigate.outputs.confidence_below_threshold == 'true' ||
           needs.ai-investigate.result == 'failure' ||
           needs.ai-investigate.result == 'skipped' ||
           needs.apply-ai-fix.result == 'failure' ||
