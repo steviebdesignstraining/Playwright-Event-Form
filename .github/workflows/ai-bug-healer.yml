@@ -554,6 +554,7 @@ jobs:
           retention-days: 30
 
       - name: Upload AI Fix Summary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-fix-summary
@@ -616,6 +617,7 @@ jobs:
           npx tsx scripts/validate-patch.ts
 
       - name: Upload AI Fix Summary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-fix-summary
@@ -719,6 +721,7 @@ jobs:
           npx tsx scripts/run-targeted-test.ts
 
       - name: Upload AI Fix Summary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-fix-summary
@@ -770,14 +773,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Full Regression
+        id: run-regression
         run: |
           npm run test:ci
 
       - name: Update Regression Result
+        if: always()
         run: |
-          cat ai-fix-summary.json | jq '.regressionResult = "passed"' > ai-fix-summary.json.tmp && mv ai-fix-summary.json.tmp ai-fix-summary.json
+          if [ -f ai-fix-summary.json ]; then
+            if [ "${{ steps.run-regression.outcome }}" = "success" ]; then
+              cat ai-fix-summary.json | jq '.regressionResult = "passed"' > ai-fix-summary.json.tmp && mv ai-fix-summary.json.tmp ai-fix-summary.json
+            else
+              cat ai-fix-summary.json | jq '.regressionResult = "failed"' > ai-fix-summary.json.tmp && mv ai-fix-summary.json.tmp ai-fix-summary.json
+            fi
+          fi
 
       - name: Upload AI Fix Summary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-fix-summary
