@@ -19,6 +19,13 @@ bug-analysis.json
 validated-bug.json
 created-issues.json
 
+# AI Bug Healer runtime artifacts (generated at runtime, not committed)
+bug-context.json
+root-cause.json
+ai-fix-summary.json
+project-status-transitions.json
+git-diff.patch
+
 # OS / editor
 .DS_Store
 .idea/

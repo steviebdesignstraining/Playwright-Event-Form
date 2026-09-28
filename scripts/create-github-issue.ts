@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 
 interface BugAnalysis {
   title: string;
@@ -50,7 +51,7 @@ function getRepoInfo(): { owner: string; repo: string } {
   }
 
   try {
-    const remote = require('child_process').execSync('git config --get remote.origin.url', { cwd: rootDir, encoding: 'utf-8' }).trim();
+    const remote = execSync('git config --get remote.origin.url', { cwd: rootDir, encoding: 'utf-8' }).trim();
     const match = remote.match(/(?:git@github\.com:|https:\/\/github\.com\/)([^\/\s]+)\/([^\/\s]+?)(?:\.git)?$/);
     if (match) {
       return { owner: match[1], repo: match[2] };

@@ -40,6 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
+      skip: ${{ steps.validate-status.outputs.skip }}
       issue_number: ${{ steps.set-outputs.outputs.issue_number }}
       remaining_issues: ${{ steps.set-outputs.outputs.remaining_issues }}
       project_item_id: ${{ steps.set-outputs.outputs.project_item_id }}
@@ -172,6 +173,7 @@ jobs:
   update-project-investigating:
     name: Move to AI Investigating
     needs: select-bug
+    if: always() && needs.select-bug.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -200,7 +202,7 @@ jobs:
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER || '2' }}
           PROJECT_ITEM_ID: ${{ needs.select-bug.outputs.project_item_id }}
           TARGET_STATUS: "AI Investigating"
         run: |
@@ -423,6 +425,7 @@ jobs:
           if (( $(echo "$CONFIDENCE < $THRESHOLD" | bc -l) )); then
             echo "confidence_below_threshold=true" >> "$GITHUB_OUTPUT"
             echo "Confidence still below retry threshold. Will move to AI Fix Failed."
+            exit 1
           else
             echo "confidence_below_threshold=false" >> "$GITHUB_OUTPUT"
           fi
@@ -471,7 +474,7 @@ jobs:
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER || '2' }}
           TARGET_STATUS: "AI Fixing"
         run: |
           npx tsx scripts/update-project-status.ts
@@ -640,7 +643,7 @@ jobs:
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER || '2' }}
           TARGET_STATUS: "Testing"
         run: |
           npx tsx scripts/update-project-status.ts
@@ -802,6 +805,11 @@ jobs:
           git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}"
           git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
+      - name: Set git config
+        run: |
+          git config user.name "AI Bug Healer"
+          git config user.email "ai-bug-healer@github-actions"
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -857,7 +865,7 @@ jobs:
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER || '2' }}
           TARGET_STATUS: "Human Review"
         run: |
           npx tsx scripts/update-project-status.ts
@@ -1014,7 +1022,7 @@ jobs:
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER || '2' }}
           TARGET_STATUS: "Done"
         run: |
           npx tsx scripts/verify-post-merge.ts
@@ -1094,7 +1102,7 @@ jobs:
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER || '2' }}
           TARGET_STATUS: "AI Fix Failed"
         run: |
           npx tsx scripts/update-project-status.ts
@@ -1105,7 +1113,7 @@ jobs:
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER || '2' }}
           TARGET_STATUS: "AI Fixing"
         run: |
           npx tsx scripts/update-project-status.ts

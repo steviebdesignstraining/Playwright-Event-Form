@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 import { resolveArtifactPath } from './github-project.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -115,7 +116,6 @@ function getRepoInfo(): { owner: string; repo: string } {
     }
   }
   try {
-    const { execSync } = require('node:child_process');
     const remote = execSync('git config --get remote.origin.url', { cwd: rootDir, encoding: 'utf-8' }).trim();
     const match = remote.match(/(?:git@github\.com:|https:\/\/github\.com\/)([^\/\s]+)\/([^\/\s]+?)(?:\.git)?$/);
     if (match) {
