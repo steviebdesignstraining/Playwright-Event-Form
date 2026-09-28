@@ -1,0 +1,12 @@
+{
+  "issueNumber": 123,
+  "title": "Test fails on login page submit button",
+  "rootCause": "AI investigation failed",
+  "confidence": 0,
+  "affectedFiles": [],
+  "suggestedFix": "",
+  "testToValidate": "",
+  "reasoning": "Error: Gemini API error: 400 [{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please pass a valid API key\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n]",
+  "attempt": 1,
+  "maxAttempts": 2
+}

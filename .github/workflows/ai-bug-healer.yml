@@ -358,14 +358,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload AI Fix Summary
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-fix-summary
-          path: ai-fix-summary.json
-          if-no-files-found: error
-          retention-days: 30
-
   retry-ai-investigate:
     name: Retry AI Investigation
     needs: [ai-investigate, create-fix-branch]
@@ -440,14 +432,6 @@ jobs:
         with:
           name: root-cause
           path: root-cause.json
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload AI Fix Summary
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-fix-summary
-          path: ai-fix-summary.json
           if-no-files-found: error
           retention-days: 30
 

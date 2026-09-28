@@ -1,0 +1,10 @@
+{
+  "issueNumber": 123,
+  "title": "Test fails on login page submit button",
+  "body": "## Environment\nChrome v120\n\n## Test Failure\nThe test 'should login with valid credentials' fails when clicking the submit button.\n\n```\n  1) LoginForm > should login with valid credentials\n      Expected: element to be visible\n      Received: element not found\n```\n\n## Stack Trace\n```\nError: locator.click: Timeout 30000ms exceeded\n```\n",
+  "url": "https://github.com/test/repo/issues/123",
+  "labels": ["bug", "test-failure"],
+  "projectItemId": "PVT_123",
+  "projectStatus": "Todo",
+  "state": "open"
+}

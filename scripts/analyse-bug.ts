@@ -94,10 +94,6 @@ function isDailyQuotaError(responseText: string): boolean {
   return /GenerateRequestsPerDayPerProjectPerModel-FreeTier|daily.*quota|quota.*exhausted/i.test(responseText);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 function parseRetryDelay(responseText: string): number {
   try {
     const body = JSON.parse(responseText);

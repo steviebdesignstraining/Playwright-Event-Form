@@ -1,0 +1,23 @@
+{
+  "issueNumber": 0,
+  "projectItemId": "",
+  "initialStatus": "Todo",
+  "finalStatus": "Todo",
+  "branch": "",
+  "attempt": 1,
+  "maxAttempts": 2,
+  "rootCause": "",
+  "confidence": 0,
+  "filesChanged": [],
+  "linesAdded": 0,
+  "linesDeleted": 0,
+  "targetedTest": "should login with valid credentials",
+  "targetedTestResult": "failed",
+  "regressionResult": "pending",
+  "pullRequest": null,
+  "pullRequestUrl": null,
+  "reviewStatus": "pending",
+  "mergeStatus": "pending",
+  "postMergeVerification": "pending",
+  "projectCompletion": "Todo"
+}
