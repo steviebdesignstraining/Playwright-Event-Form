@@ -153,10 +153,25 @@ Affected Files:
 
   for (const filePath of rootCause.affectedFiles) {
     const content = loadFileContent(filePath);
-    evidence += `\n--- ${filePath} ---\n${content || '[FILE NOT FOUND - will be created]'}n`;
+    evidence += `\n--- ${filePath} ---\n${content || '[FILE NOT FOUND - will be created]'}\n`;
   }
 
   return evidence;
+}
+
+function stripJsonFences(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.startsWith('```json') || trimmed.startsWith('```')) {
+    const lines = trimmed.split('\n');
+    if (lines[0].startsWith('```')) {
+      lines.shift();
+    }
+    if (lines.length > 0 && lines[lines.length - 1].startsWith('```')) {
+      lines.pop();
+    }
+    return lines.join('\n').trim();
+  }
+  return trimmed;
 }
 
 async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
@@ -240,7 +255,7 @@ async function callGemini(apiKey: string, systemPrompt: string, userPrompt: stri
     throw new Error('Gemini output truncated');
   }
 
-  return content;
+  return stripJsonFences(content);
 }
 
 function countDiff(original: string, modified: string): { added: number; deleted: number } {

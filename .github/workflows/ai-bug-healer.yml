@@ -248,10 +248,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+          ISSUE_NUMBER: ${{ needs.select-bug.outputs.issue_number }}
+          ISSUE_TITLE: ${{ needs.select-bug.outputs.issue_title }}
         run: |
-          ISSUE_NUMBER="${{ needs.select-bug.outputs.issue_number }}"
-          ISSUE_TITLE="${{ needs.select-bug.outputs.issue_title }}"
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "ERROR: select-bug did not provide an issue number."
+            exit 1
+          fi
           SLUG=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g' | cut -c1-50)
+          SLUG="${SLUG:-bug}"
           BRANCH_NAME="fix/issue-${ISSUE_NUMBER}-${SLUG}"
           
           git config user.name "AI Bug Healer"
@@ -284,6 +289,8 @@ jobs:
     needs: create-fix-branch
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      confidence_below_threshold: ${{ steps.check-confidence.outputs.confidence_below_threshold }}
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
@@ -307,8 +314,15 @@ jobs:
         run: npm ci
 
       - name: Checkout Fix Branch
+        env:
+          BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+          if [ -z "$BRANCH_NAME" ]; then
+            echo "ERROR: create-fix-branch did not provide a branch name (empty output)."
+            exit 1
+          fi
+          git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}"
+          git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -426,8 +440,15 @@ jobs:
         run: npm ci
 
       - name: Checkout Fix Branch
+        env:
+          BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+          if [ -z "$BRANCH_NAME" ]; then
+            echo "ERROR: create-fix-branch did not provide a branch name (empty output)."
+            exit 1
+          fi
+          git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}"
+          git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -479,8 +500,15 @@ jobs:
         run: npm ci
 
       - name: Checkout Fix Branch
+        env:
+          BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+          if [ -z "$BRANCH_NAME" ]; then
+            echo "ERROR: create-fix-branch did not provide a branch name (empty output)."
+            exit 1
+          fi
+          git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}"
+          git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -576,8 +604,15 @@ jobs:
         run: npx playwright install --with-deps
 
       - name: Checkout Fix Branch
+        env:
+          BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+          if [ -z "$BRANCH_NAME" ]; then
+            echo "ERROR: create-fix-branch did not provide a branch name (empty output)."
+            exit 1
+          fi
+          git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}"
+          git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -627,8 +662,15 @@ jobs:
         run: npx playwright install --with-deps
 
       - name: Checkout Fix Branch
+        env:
+          BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+          if [ -z "$BRANCH_NAME" ]; then
+            echo "ERROR: create-fix-branch did not provide a branch name (empty output)."
+            exit 1
+          fi
+          git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}"
+          git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -676,8 +718,15 @@ jobs:
         run: npm ci
 
       - name: Checkout Fix Branch
+        env:
+          BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
-          git checkout "${{ needs.create-fix-branch.outputs.branch_name }}"
+          if [ -z "$BRANCH_NAME" ]; then
+            echo "ERROR: create-fix-branch did not provide a branch name (empty output)."
+            exit 1
+          fi
+          git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}"
+          git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -926,6 +975,8 @@ jobs:
     if: |
       always() &&
       (needs.ai-investigate.outputs.confidence_below_threshold == 'true' ||
+       needs.ai-investigate.result == 'failure' ||
+       needs.ai-investigate.result == 'skipped' ||
        needs.apply-ai-fix.result == 'failure' ||
        needs.targeted-test.result == 'failure' ||
        needs.full-regression.result == 'failure' ||
@@ -957,7 +1008,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Move to AI Fix Failed
-        if: needs.ai-investigate.outputs.confidence_below_threshold == 'true' || needs.apply-ai-fix.result == 'failure'
+        if: |
+          needs.ai-investigate.outputs.confidence_below_threshold == 'true' ||
+          needs.ai-investigate.result == 'failure' ||
+          needs.ai-investigate.result == 'skipped' ||
+          needs.apply-ai-fix.result == 'failure'
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
