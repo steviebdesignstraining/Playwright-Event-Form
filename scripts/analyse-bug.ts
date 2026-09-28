@@ -70,11 +70,29 @@ interface BugAnalysisSchema {
 }
 
 const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 const MAX_OUTPUT_TOKENS = 8192;
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 5_000;
+const PRIMARY_MODEL = 'gemini-3.6-flash';
+const DEFAULT_FALLBACK_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function resolveModelChain(): string[] {
+  const primary = process.env.GEMINI_MODEL || PRIMARY_MODEL;
+  const fallbacks = (process.env.GEMINI_FALLBACK_MODEL || DEFAULT_FALLBACK_MODELS.join(','))
+    .split(',')
+    .map(m => m.trim())
+    .filter(Boolean);
+  return [...new Set([primary, ...fallbacks])];
+}
+
+function isDailyQuotaError(responseText: string): boolean {
+  return /GenerateRequestsPerDayPerProjectPerModel-FreeTier|daily.*quota|quota.*exhausted/i.test(responseText);
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -116,6 +134,7 @@ async function callGemini(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string,
+  model: string = process.env.GEMINI_MODEL || PRIMARY_MODEL,
   attempt: number = 1,
   maxAttempts: number = MAX_RETRIES
 ): Promise<string> {
@@ -127,7 +146,7 @@ async function callGemini(
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     body: JSON.stringify({
-      model: GEMINI_MODEL,
+      model: model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -160,17 +179,27 @@ async function callGemini(
 
   if (!response.ok) {
     if (response.status === 429) {
+      if (isDailyQuotaError(responseText)) {
+        const models = resolveModelChain();
+        const nextModelIndex = models.indexOf(model) + 1;
+        if (nextModelIndex < models.length) {
+          const nextModel = models[nextModelIndex];
+          console.warn(`Gemini daily quota exhausted for ${model}. Switching to fallback model: ${nextModel}`);
+          return callGemini(apiKey, systemPrompt, userPrompt, nextModel, 1, maxAttempts);
+        }
+        const retryAfterMatch = responseText.match(/"retryDelay":\s*"([\d.]+)s"/);
+        const retryAfter = retryAfterMatch ? `${retryAfterMatch[1]}s` : 'unknown';
+        throw new Error(`Gemini daily quota exhausted for all models (${models.join(', ')}). Retry after: ${retryAfter}.`);
+      }
       const retryInfo = parseRetryDelay(responseText);
       const backoffDelay = retryInfo * attempt;
       const delayMs = Math.min(Math.max(backoffDelay, 1000), 180_000);
       console.warn(`Gemini rate-limited (429). Retrying in ${delayMs / 1000}s (attempt ${attempt}/${maxAttempts})...`);
       await sleep(delayMs);
       if (attempt >= maxAttempts) {
-        const retryAfterMatch = responseText.match(/"retryDelay":\s*"([\d.]+)s"/);
-        const retryAfter = retryAfterMatch ? `${retryAfterMatch[1]}s` : 'unknown';
-        throw new Error(`Gemini API rate-limited (429) after ${attempt} retries. Server suggests retry after ${retryAfter}. Quota: ${responseText.includes('generate_content') ? 'daily free tier exhausted' : 'rate limited'}.`);
+        throw new Error(`Gemini API rate-limited (429) after ${attempt} retries. Server suggests retry after ${responseText.match(/"retryDelay":\s*"([\d.]+)s"/)?.[1] || 'unknown'}.`);
       }
-      return callGemini(apiKey, systemPrompt, userPrompt, attempt + 1, maxAttempts);
+      return callGemini(apiKey, systemPrompt, userPrompt, model, attempt + 1, maxAttempts);
     }
     throw new Error(`Gemini API error: ${response.status} ${responseText}`);
   }
@@ -330,11 +359,15 @@ async function main() {
   console.log(`Issue: #${bugContext.issueNumber} - ${bugContext.title}`);
   console.log(`Attempt: ${attempt}/${maxAttempts}`);
 
+  const models = resolveModelChain();
+  console.log(`Model chain: ${models.join(' -> ')}`);
+  console.log(`Using primary model: ${models[0]}`);
+
   const evidence = buildEvidence(bugContext, failureData);
 
   let analysis: RootCauseAnalysis;
   try {
-    const response = await callGemini(apiKey, SYSTEM_PROMPT, evidence);
+    const response = await callGemini(apiKey, SYSTEM_PROMPT, evidence, models[0]);
     const parsed = JSON.parse(response);
 
     analysis = {

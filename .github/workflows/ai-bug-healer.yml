@@ -294,6 +294,7 @@ jobs:
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+      GEMINI_FALLBACK_MODEL: ${{ vars.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash' }}
       CONFIDENCE_THRESHOLD: ${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD || '0.70' }}
       ATTEMPT_NUMBER: 1
       MAX_ATTEMPTS: ${{ vars.AI_HEAL_MAX_ATTEMPTS || '2' }}
@@ -378,6 +379,7 @@ jobs:
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+      GEMINI_FALLBACK_MODEL: ${{ vars.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash' }}
       CONFIDENCE_THRESHOLD: ${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD_RETRY || '0.50' }}
       ATTEMPT_NUMBER: 2
       MAX_ATTEMPTS: ${{ vars.AI_HEAL_MAX_ATTEMPTS || '2' }}
@@ -506,6 +508,7 @@ jobs:
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+      GEMINI_FALLBACK_MODEL: ${{ vars.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.8-flash' }}
       CONFIDENCE_THRESHOLD: ${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD_APPLY || '0.50' }}
       MAX_FILES: ${{ vars.AI_HEAL_MAX_FILES || '10' }}
       MAX_ADDED_LINES: ${{ vars.AI_HEAL_MAX_ADDED_LINES || '300' }}
