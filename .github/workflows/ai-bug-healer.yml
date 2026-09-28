@@ -290,6 +290,8 @@ jobs:
     needs: create-fix-branch
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      confidence_below_threshold: ${{ steps.check-confidence.outputs.confidence_below_threshold }}
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}

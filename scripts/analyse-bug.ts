@@ -74,6 +74,21 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 const MAX_OUTPUT_TOKENS = 8192;
 const REQUEST_TIMEOUT_MS = 120_000;
 
+function stripJsonFences(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.startsWith('```json') || trimmed.startsWith('```')) {
+    const lines = trimmed.split('\n');
+    if (lines[0].startsWith('```')) {
+      lines.shift();
+    }
+    if (lines.length > 0 && lines[lines.length - 1].startsWith('```')) {
+      lines.pop();
+    }
+    return lines.join('\n').trim();
+  }
+  return trimmed;
+}
+
 async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
   const response = await fetch(`${GEMINI_BASE_URL}/chat/completions`, {
     method: 'POST',
@@ -143,7 +158,7 @@ async function callGemini(apiKey: string, systemPrompt: string, userPrompt: stri
     throw new Error('Gemini output truncated');
   }
 
-  return content;
+  return stripJsonFences(content);
 }
 
 function loadBugContext(): BugContext {
