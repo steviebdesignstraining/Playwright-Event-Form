@@ -592,6 +592,12 @@ jobs:
           git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}"
           git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
+      - name: Restore validation scripts from default branch
+        run: |
+          git checkout "origin/${{ env.DEFAULT_BRANCH }}" -- scripts/validate-patch.ts tsconfig.json
+          git add scripts/validate-patch.ts tsconfig.json
+          echo "Restored validate-patch.ts and tsconfig.json from ${{ env.DEFAULT_BRANCH }}"
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -1058,7 +1064,7 @@ jobs:
 
   handle-failure:
     name: Handle Failure
-    needs: [create-fix-branch, update-project-fixing, ai-investigate, retry-ai-investigate, apply-ai-fix, targeted-test, full-regression, wait-for-human-review, verify-merged-fix]
+    needs: [create-fix-branch, update-project-fixing, ai-investigate, retry-ai-investigate, apply-ai-fix, validate-ai-patch, targeted-test, full-regression, wait-for-human-review, verify-merged-fix]
     if: |
       always() &&
       (needs.ai-investigate.result == 'failure' ||
@@ -1068,6 +1074,7 @@ jobs:
        needs.update-project-fixing.result == 'failure' ||
        needs.apply-ai-fix.result == 'failure' ||
        needs.apply-ai-fix.result == 'skipped' ||
+       needs.validate-ai-patch.result == 'failure' ||
        needs.targeted-test.result == 'failure' ||
        needs.full-regression.result == 'failure' ||
        needs.verify-merged-fix.result == 'failure' ||
@@ -1107,6 +1114,7 @@ jobs:
           needs.update-project-fixing.result == 'failure' ||
           needs.apply-ai-fix.result == 'failure' ||
           needs.apply-ai-fix.result == 'skipped' ||
+          needs.validate-ai-patch.result == 'failure' ||
           needs.verify-merged-fix.result == 'failure'
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
