@@ -453,10 +453,9 @@ jobs:
     name: Move to AI Fixing
     needs: [ai-investigate, retry-ai-investigate]
     if: |
-      always() && (
-        (needs.ai-investigate.result == 'success' && needs.ai-investigate.outputs.confidence_below_threshold != 'true') ||
-        (needs.retry-ai-investigate.result == 'success' && needs.retry-ai-investigate.outputs.confidence_below_threshold != 'true')
-      )
+      always() &&
+      needs.ai-investigate.result != 'failure' &&
+      needs.retry-ai-investigate.result != 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -507,7 +506,7 @@ jobs:
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
-      CONFIDENCE_THRESHOLD: ${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD || '0.70' }}
+      CONFIDENCE_THRESHOLD: ${{ vars.AI_HEAL_CONFIDENCE_THRESHOLD_APPLY || '0.50' }}
       MAX_FILES: ${{ vars.AI_HEAL_MAX_FILES || '10' }}
       MAX_ADDED_LINES: ${{ vars.AI_HEAL_MAX_ADDED_LINES || '300' }}
       MAX_DELETED_LINES: ${{ vars.AI_HEAL_MAX_DELETED_LINES || '150' }}
@@ -1062,10 +1061,10 @@ jobs:
     needs: [ai-investigate, retry-ai-investigate, apply-ai-fix, targeted-test, full-regression, wait-for-human-review, verify-merged-fix]
     if: |
       always() &&
-      (needs.ai-investigate.outputs.confidence_below_threshold == 'true' ||
-       needs.retry-ai-investigate.outputs.confidence_below_threshold == 'true' ||
-       needs.ai-investigate.result == 'failure' ||
+      (needs.ai-investigate.result == 'failure' ||
+       needs.retry-ai-investigate.result == 'failure' ||
        needs.ai-investigate.result == 'skipped' ||
+       needs.retry-ai-investigate.result == 'skipped' ||
        needs.apply-ai-fix.result == 'failure' ||
        needs.targeted-test.result == 'failure' ||
        needs.full-regression.result == 'failure' ||
@@ -1099,10 +1098,10 @@ jobs:
 
       - name: Move to AI Fix Failed
         if: |
-          needs.ai-investigate.outputs.confidence_below_threshold == 'true' ||
-          needs.retry-ai-investigate.outputs.confidence_below_threshold == 'true' ||
           needs.ai-investigate.result == 'failure' ||
+          needs.retry-ai-investigate.result == 'failure' ||
           needs.ai-investigate.result == 'skipped' ||
+          needs.retry-ai-investigate.result == 'skipped' ||
           needs.apply-ai-fix.result == 'failure' ||
           needs.verify-merged-fix.result == 'failure'
         env:
@@ -1112,7 +1111,7 @@ jobs:
           TARGET_STATUS: "AI Fix Failed"
         run: |
           npx tsx scripts/update-project-status.ts
-          echo "Moved to AI Fix Failed due to low confidence or fix application failure"
+          echo "Moved to AI Fix Failed due to investigation failure or fix application failure"
 
       - name: Move back to AI Fixing for retry
         if: needs.targeted-test.result == 'failure' || needs.full-regression.result == 'failure'

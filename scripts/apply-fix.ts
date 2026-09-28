@@ -296,10 +296,11 @@ async function main() {
   const bugContext = loadBugContext();
   const summary = loadAiFixSummary();
 
-  const confidenceThreshold = parseFloat(process.env.CONFIDENCE_THRESHOLD || '0.70');
+  const confidenceThreshold = parseFloat(process.env.CONFIDENCE_THRESHOLD || '0.50');
   if (rootCause.confidence < confidenceThreshold) {
-    console.error(`Confidence ${(rootCause.confidence * 100).toFixed(0)}% is below threshold ${(confidenceThreshold * 100).toFixed(0)}%. Fix aborted.`);
-    process.exit(1);
+    console.warn(`⚠️ Confidence ${(rootCause.confidence * 100).toFixed(0)}% is below threshold ${(confidenceThreshold * 100).toFixed(0)}%. Proceeding with best-effort fix.`);
+  } else {
+    console.log(`Confidence ${(rootCause.confidence * 100).toFixed(0)}% meets threshold ${(confidenceThreshold * 100).toFixed(0)}%. Proceeding with fix.`);
   }
 
   const maxFiles = parseInt(process.env.MAX_FILES || '10', 10);

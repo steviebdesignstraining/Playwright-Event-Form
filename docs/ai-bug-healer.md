@@ -181,6 +181,7 @@ node scripts/sync-github-secrets.mjs list-secrets
 | `AI_HEAL_MAX_DELETED_LINES` | Max lines deleted | `150` |
 | `AI_HEAL_CONFIDENCE_THRESHOLD` | Min AI confidence (primary) | `0.70` |
 | `AI_HEAL_CONFIDENCE_THRESHOLD_RETRY` | Min AI confidence (retry fallback) | `0.50` |
+| `AI_HEAL_CONFIDENCE_THRESHOLD_APPLY` | Min confidence for apply-ai-fix (best-effort mode) | `0.50` |
 | `AI_HEAL_MAX_WAIT_MINUTES` | Max wait for human review | `60` |
 | `AI_HEAL_POLL_INTERVAL` | Poll interval for PR review | `30` |
 | `GEMINI_MODEL` | Gemini model to use | `gemini-3.6-flash` |
@@ -209,6 +210,7 @@ node scripts/sync-github-secrets.mjs list-secrets
 | `AI_HEAL_MAX_DELETED_LINES` | Max lines deleted | `150` |
 | `AI_HEAL_CONFIDENCE_THRESHOLD` | Min AI confidence | `0.70` |
 | `AI_HEAL_CONFIDENCE_THRESHOLD_RETRY` | Retry confidence threshold (lower) | `0.50` |
+| `AI_HEAL_CONFIDENCE_THRESHOLD_APPLY` | Min confidence for apply-ai-fix (best-effort) | `0.50` |
 | `AI_HEAL_MAX_WAIT_MINUTES` | Max wait for human review | `60` |
 | `AI_HEAL_POLL_INTERVAL` | Poll interval for PR review | `30` |
 | `GEMINI_MODEL` | Gemini model to use | `gemini-3.6-flash` |
@@ -269,11 +271,18 @@ If the existing Project uses different names, the workflow adapts to the actual 
   - Suggested fix
   - Test to validate
   - Reasoning
-- If confidence < threshold (default 0.70), moves to `AI Fix Failed`
+- If confidence < `AI_HEAL_CONFIDENCE_THRESHOLD` (default 0.70), triggers `retry-ai-investigate`
 
-### 5. Move to AI Fixing (`update-project-fixing`)
+### 5. Retry AI Investigation (`retry-ai-investigate`)
+- Runs only when `ai-investigate` confidence is below `AI_HEAL_CONFIDENCE_THRESHOLD` (default 0.70)
+- Re-runs investigation with lower threshold `AI_HEAL_CONFIDENCE_THRESHOLD_RETRY` (default 0.50)
+- If retry still below threshold: proceeds to best-effort fix (tests will validate)
+- If retry also fails (crash/error): moves to `AI Fix Failed`
+
+### 6. Move to AI Fixing (`update-project-fixing`)
 - Updates Project status: `AI Investigating → AI Fixing`
-- Only after credible root cause established
+- Always runs (best-effort) after investigation, even with low confidence
+- Downstream jobs no longer skipped due to low confidence
 
 ### 6. Apply AI Fix (`apply-ai-fix`)
 - AI applies minimal, safe fix to source code
@@ -553,7 +562,7 @@ Monitor the workflow run for progress through each lifecycle stage.
 |-------|------------|
 | Project not found | Check `PROJECT_NAME` and `PROJECT_NUMBER` variables; ensure PAT has `project` scope |
 | Status option not found | Verify Project has "Status" single-select field with required options |
-| AI confidence too low | Retry investigation with lower threshold (`AI_HEAL_CONFIDENCE_THRESHOLD_RETRY`); if still below threshold, move to `AI Fix Failed` for manual review |
+| AI confidence too low | Retry investigation with lower threshold (`AI_HEAL_CONFIDENCE_THRESHOLD_RETRY`); proceeds with best-effort fix if still low (tests will validate); move to `AI Fix Failed` only on actual failures |
 | Targeted test fails | AI will retry (max 2); check root-cause.json for analysis |
 | PR not approved | Wait for human review; workflow polls for 60 min by default |
 | Post-merge tests fail | Fix may have integration issues; investigate on default branch |
