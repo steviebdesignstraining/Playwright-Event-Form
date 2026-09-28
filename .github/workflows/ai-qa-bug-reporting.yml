@@ -366,12 +366,12 @@ jobs:
       - analyse-failure
 
     # always() is required because analyse-failure is conditionally
-    # executed. We then explicitly check its result.
+    # executed. We run create-issue whenever tests failed, even if
+    # analysis failed — evidence-only fallback records may still be present.
     if: |
       always() &&
       needs.run-tests.result == 'success' &&
-      needs.run-tests.outputs.has_failure == 'true' &&
-      needs.analyse-failure.result == 'success'
+      needs.run-tests.outputs.has_failure == 'true'
 
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -395,6 +395,7 @@ jobs:
         run: npm ci
 
       - name: Download AI analysis
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: ai-analysis
@@ -481,22 +482,24 @@ jobs:
         run: npm ci
 
       - name: Download created issues
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: created-issues
           path: .
 
       - name: Verify created issues
+        if: always()
         run: |
           if [ ! -f "created-issues.json" ]; then
-            echo "ERROR: created-issues.json not found."
-            exit 1
+            echo "WARNING: created-issues.json not found. Issues may not have been created."
+          else
+            echo "Issues to add:"
+            cat created-issues.json
           fi
 
-          echo "Issues to add:"
-          cat created-issues.json
-
       - name: Add issues to GitHub Project
+        if: always() && !cancelled()
         env:
           # Personal (user-owned) Projects v2 are invisible to the default GITHUB_TOKEN.
           # PROJECT_PAT = classic PAT with `repo` + `project` scopes.
@@ -509,6 +512,11 @@ jobs:
           echo "Adding issues to GitHub Project"
           echo "Project: $PROJECT_NAME"
           echo "========================================"
+
+          if [ ! -f "created-issues.json" ]; then
+            echo "WARNING: No created-issues.json found. Nothing to add to project."
+            exit 0
+          fi
 
           npx tsx scripts/add-to-project.ts
 
@@ -612,9 +620,10 @@ jobs:
       - add-to-project
 
     if: |
-      always() &&
-      needs.create-issue.result == 'success' &&
-      needs.create-issue.outputs.issues_created == 'true'
+      always() && (
+        (needs.create-issue.result == 'success' && needs.create-issue.outputs.issues_created == 'true') ||
+        (needs.add-to-project.result == 'success' || needs.add-to-project.result == 'skipped')
+      )
 
     runs-on: ubuntu-latest
     timeout-minutes: 10
