@@ -174,7 +174,36 @@ function stripJsonFences(content: string): string {
   return trimmed;
 }
 
-async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 5_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseRetryDelay(responseText: string): number {
+  try {
+    const body = JSON.parse(responseText);
+    const retryInfo = body.error?.details?.find(
+      (d: any) => d['@type'] === 'type.googleapis.com/google.rpc.RetryInfo'
+    );
+    if (retryInfo?.retryDelay) {
+      const match = retryInfo.retryDelay.match(/^([\d.]+)s$/);
+      if (match) return parseFloat(match[1]) * 1000;
+    }
+  } catch {
+    // fall through to default
+  }
+  return RETRY_BASE_DELAY_MS;
+}
+
+async function callGemini(
+  apiKey: string,
+  systemPrompt: string,
+  userPrompt: string,
+  attempt: number = 1,
+  maxAttempts: number = MAX_RETRIES
+): Promise<string> {
   const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai';
   const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
   const MAX_OUTPUT_TOKENS = 8192;
@@ -227,8 +256,34 @@ async function callGemini(apiKey: string, systemPrompt: string, userPrompt: stri
   const responseText = await response.text();
 
   if (!response.ok) {
+    if (response.status === 429) {
+      const retryInfo = parseRetryDelay(responseText);
+      const delayMs = Math.min(Math.max(retryInfo, 1000), 120_000);
+      console.warn(`Gemini rate-limited (429). Retrying in ${delayMs / 1000}s...`);
+      await sleep(delayMs);
+      if (attempt >= maxAttempts) {
+        throw new Error(`Gemini API rate-limited (429) after ${attempt} retries. Retry delay: ${retryInfo}ms. ${responseText}`);
+      }
+      return callGemini(apiKey, systemPrompt, userPrompt, attempt + 1, maxAttempts);
+    }
     throw new Error(`Gemini API error: ${response.status} ${responseText}`);
   }
+
+  let body: {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+    error?: { message?: string };
+  };
+  try {
+    body = JSON.parse(responseText);
+  } catch {
+    throw new Error(`Gemini returned non-JSON: ${responseText.substring(0, 200)}`);
+  }
+
+  if (body.error) {
+    throw new Error(`Gemini error in 200 response: ${body.error.message}`);
+  }
+
+  const choice = body.choices?.[0];
 
   let body: {
     choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
