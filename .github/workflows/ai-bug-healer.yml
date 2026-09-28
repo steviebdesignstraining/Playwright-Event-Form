@@ -429,13 +429,14 @@ jobs:
           echo "AI Confidence (retry): $CONFIDENCE (retry threshold: $THRESHOLD)"
           if (( $(echo "$CONFIDENCE < $THRESHOLD" | bc -l) )); then
             echo "confidence_below_threshold=true" >> "$GITHUB_OUTPUT"
-            echo "Confidence still below retry threshold. Will move to AI Fix Failed."
+            echo "Confidence still below retry threshold. Will move to AI Fixing for retry."
             exit 1
           else
             echo "confidence_below_threshold=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload Retry Root Cause
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: root-cause
@@ -1108,7 +1109,6 @@ jobs:
       - name: Move to AI Fix Failed
         if: |
           needs.ai-investigate.result == 'failure' ||
-          needs.retry-ai-investigate.result == 'failure' ||
           needs.ai-investigate.result == 'skipped' ||
           needs.create-fix-branch.result == 'failure' ||
           needs.update-project-fixing.result == 'failure' ||
@@ -1126,7 +1126,7 @@ jobs:
           echo "Moved to AI Fix Failed due to investigation failure or fix application failure"
 
       - name: Move back to AI Fixing for retry
-        if: needs.targeted-test.result == 'failure' || needs.full-regression.result == 'failure'
+        if: needs.targeted-test.result == 'failure' || needs.full-regression.result == 'failure' || needs.retry-ai-investigate.result == 'failure'
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
