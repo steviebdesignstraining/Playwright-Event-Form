@@ -971,7 +971,7 @@ jobs:
 
   handle-failure:
     name: Handle Failure
-    needs: [ai-investigate, apply-ai-fix, targeted-test, full-regression, wait-for-human-review]
+    needs: [ai-investigate, apply-ai-fix, targeted-test, full-regression, wait-for-human-review, verify-merged-fix]
     if: |
       always() &&
       (needs.ai-investigate.outputs.confidence_below_threshold == 'true' ||
@@ -980,6 +980,7 @@ jobs:
        needs.apply-ai-fix.result == 'failure' ||
        needs.targeted-test.result == 'failure' ||
        needs.full-regression.result == 'failure' ||
+       needs.verify-merged-fix.result == 'failure' ||
        needs.wait-for-human-review.outputs.changes_requested == 'true' ||
        needs.wait-for-human-review.outputs.timeout == 'true')
     runs-on: ubuntu-latest
@@ -1012,7 +1013,8 @@ jobs:
           needs.ai-investigate.outputs.confidence_below_threshold == 'true' ||
           needs.ai-investigate.result == 'failure' ||
           needs.ai-investigate.result == 'skipped' ||
-          needs.apply-ai-fix.result == 'failure'
+          needs.apply-ai-fix.result == 'failure' ||
+          needs.verify-merged-fix.result == 'failure'
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
