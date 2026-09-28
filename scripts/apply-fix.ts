@@ -284,22 +284,6 @@ async function callGemini(
   }
 
   const choice = body.choices?.[0];
-
-  let body: {
-    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
-    error?: { message?: string };
-  };
-  try {
-    body = JSON.parse(responseText);
-  } catch {
-    throw new Error(`Gemini returned non-JSON: ${responseText.substring(0, 200)}`);
-  }
-
-  if (body.error) {
-    throw new Error(`Gemini error in 200 response: ${body.error.message}`);
-  }
-
-  const choice = body.choices?.[0];
   const content = choice?.message?.content || '';
 
   if (!content) {
