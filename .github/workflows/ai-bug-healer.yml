@@ -367,8 +367,10 @@ jobs:
 
   retry-ai-investigate:
     name: Retry AI Investigation
-    needs: ai-investigate
-    if: needs.ai-investigate.outputs.confidence_below_threshold == 'true'
+    needs: [ai-investigate, create-fix-branch]
+    if: |
+      needs.ai-investigate.outputs.confidence_below_threshold == 'true' &&
+      needs.create-fix-branch.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
