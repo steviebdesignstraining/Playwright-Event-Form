@@ -90,6 +90,28 @@ function loadFailureData(): Array<{ testName: string; project: string }> {
   return JSON.parse(readFileSync(path, 'utf-8'));
 }
 
+function inferProjectFromTestName(testName: string): string {
+  const testFiles = [
+    { file: 'e2e/tests/api.spec.ts', project: 'api' },
+    { file: 'e2e/tests/browser.spec.ts', project: 'chromium' },
+    { file: 'e2e/tests/usability.spec.ts', project: 'chromium' },
+    { file: 'e2e/tests/accessibility.spec.ts', project: 'chromium' },
+    { file: 'e2e/tests/security.spec.ts', project: 'chromium' },
+  ];
+
+  for (const { file, project } of testFiles) {
+    const fullPath = join(rootDir, file);
+    if (existsSync(fullPath)) {
+      const content = readFileSync(fullPath, 'utf-8');
+      if (content.includes(testName)) {
+        return project;
+      }
+    }
+  }
+
+  return 'chromium';
+}
+
 function determineTestToRun(): { testName: string; project: string } | null {
   const summary = loadAiFixSummary();
   if (summary.targetedTest) {
@@ -98,6 +120,7 @@ function determineTestToRun(): { testName: string; project: string } | null {
     if (match) {
       return { testName: match.testName, project: match.project };
     }
+    return { testName: summary.targetedTest, project: inferProjectFromTestName(summary.targetedTest) };
   }
 
   const rootCause = loadRootCause();
@@ -107,6 +130,7 @@ function determineTestToRun(): { testName: string; project: string } | null {
     if (match) {
       return { testName: match.testName, project: match.project };
     }
+    return { testName: rootCause.testToValidate, project: inferProjectFromTestName(rootCause.testToValidate) };
   }
 
   const bugContext = loadBugContext();
@@ -118,6 +142,7 @@ function determineTestToRun(): { testName: string; project: string } | null {
     if (match) {
       return { testName: match.testName, project: match.project };
     }
+    return { testName, project: inferProjectFromTestName(testName) };
   }
 
   const failureData = loadFailureData();
