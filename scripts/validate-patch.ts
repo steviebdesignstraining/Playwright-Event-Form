@@ -114,24 +114,38 @@ function checkForbiddenPatterns(files: string[]): Array<{ file: string; pattern:
 function checkSyntax(files: string[]): Array<{ file: string; error: string }> {
   const errors: Array<{ file: string; error: string }> = [];
 
-  for (const filePath of files) {
+  const tsFiles = files.filter(f => f.endsWith('.ts') || f.endsWith('.tsx'));
+  const jsFiles = files.filter(f => f.endsWith('.js') || f.endsWith('.jsx'));
+
+  if (tsFiles.length > 0) {
+    const tsconfigPath = join(rootDir, 'tsconfig.json');
+    try {
+      if (existsSync(tsconfigPath)) {
+        execSync(`npx tsc --noEmit --project "${tsconfigPath}"`, { cwd: rootDir, encoding: 'utf-8', stdio: 'pipe' });
+      } else {
+        for (const filePath of tsFiles) {
+          const fullPath = join(rootDir, filePath);
+          if (!existsSync(fullPath)) continue;
+          execSync(`npx tsc --noEmit --skipLibCheck "${fullPath}"`, { cwd: rootDir, encoding: 'utf-8', stdio: 'pipe' });
+        }
+      }
+    } catch (error) {
+      const output = error instanceof Error ? error.message : String(error);
+      for (const filePath of tsFiles) {
+        errors.push({ file: filePath, error: output });
+      }
+    }
+  }
+
+  for (const filePath of jsFiles) {
     const fullPath = join(rootDir, filePath);
     if (!existsSync(fullPath)) continue;
 
-    if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
-      try {
-        execSync(`npx tsc --noEmit --skipLibCheck "${fullPath}"`, { cwd: rootDir, encoding: 'utf-8', stdio: 'pipe' });
-      } catch (error) {
-        const output = error instanceof Error ? error.message : String(error);
-        errors.push({ file: filePath, error: output });
-      }
-    } else if (filePath.endsWith('.js') || filePath.endsWith('.jsx')) {
-      try {
-        execSync(`node --check "${fullPath}"`, { cwd: rootDir, encoding: 'utf-8', stdio: 'pipe' });
-      } catch (error) {
-        const output = error instanceof Error ? error.message : String(error);
-        errors.push({ file: filePath, error: output });
-      }
+    try {
+      execSync(`node --check "${fullPath}"`, { cwd: rootDir, encoding: 'utf-8', stdio: 'pipe' });
+    } catch (error) {
+      const output = error instanceof Error ? error.message : String(error);
+      errors.push({ file: filePath, error: output });
     }
   }
 
