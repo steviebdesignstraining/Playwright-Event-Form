@@ -1322,13 +1322,23 @@ jobs:
           github.event_name != 'workflow_call'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REMAINING_ISSUES: ${{ needs.select-bug.outputs.remaining_issues }}
         run: |
           ISSUE_NUM="${{ needs.select-bug.outputs.issue_number }}"
           if [ -z "$ISSUE_NUM" ]; then
             echo "No issue number available for retry dispatch."
             exit 0
           fi
+
+          if [ -f ai-fix-summary.json ]; then
+            ATTEMPT=$(jq -r '.attempt // 1' ai-fix-summary.json)
+            MAX_ATTEMPTS=$(jq -r '.maxAttempts // 2' ai-fix-summary.json)
+            if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+              echo "Max attempts ($MAX_ATTEMPTS) reached. No retry dispatch."
+              exit 0
+            fi
+            echo "Retry dispatch: attempt $ATTEMPT of $MAX_ATTEMPTS"
+          fi
+
           echo "Re-dispatching AI Bug Healer for issue #$ISSUE_NUM (retry)..."
           gh workflow run ai-bug-healer.yml \
             --repo "${{ github.repository }}" \
