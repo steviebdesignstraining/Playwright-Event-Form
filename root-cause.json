@@ -1,12 +1,14 @@
 {
-  "issueNumber": 123,
-  "title": "Test fails on login page submit button",
-  "rootCause": "AI investigation failed",
-  "confidence": 0,
-  "affectedFiles": [],
-  "suggestedFix": "",
-  "testToValidate": "",
-  "reasoning": "Error: Gemini API error: 400 [{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please pass a valid API key\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n]",
+  "issueNumber": 313,
+  "title": "[Product Bug] Email validation error message not displayed for invalid email format on Chromium",
+  "rootCause": "In Chromium, inputs with type=\"email\" trigger browser-native validation and invalid-state styling, and when a value lacking an '@' symbol or failing email pattern validation is submitted or evaluated, Chromium's built-in validation or interaction behavior interacts with custom JS validation or event handling such that the email field error text element isn't populated or displayed correctly under specific test conditions.",
+  "confidence": 0.85,
+  "affectedFiles": [
+    "src/client/app.ts"
+  ],
+  "suggestedFix": "Update the email validation check or form submission handler in src/client/app.ts to ensure that the error message is correctly assigned to the email error element regardless of browser-specific native validation behavior (for instance, by checking email format more robustly or handling validation state explicitly).",
+  "testToValidate": "Email validation error message not displayed for invalid email format on Chromium",
+  "reasoning": "1. The issue states that the email field error is missing the expected error message specifically on Chromium when testing an invalid email format.\n2. Looking at `src/client/app.ts`, the form uses `novalidate` on the form element, but input elements have `type=\"email\"` or `required`. In Chromium, email inputs have built-in constraints.\n3. The validation logic checks `!email.value.includes('@')`. However, Chromium's handling of `type=\"email\"` inputs might prevent form submission or interact differently with custom error assignment if the native validation fails before or alongside `showFormErrors`.\n4. Ensuring robust validation and setting of error text for `email` input elements will resolve the missing message on Chromium.",
   "attempt": 1,
   "maxAttempts": 2
 }
