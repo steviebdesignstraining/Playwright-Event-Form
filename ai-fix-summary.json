@@ -3,7 +3,7 @@
   "projectItemId": "",
   "initialStatus": "Todo",
   "finalStatus": "Todo",
-  "branch": "",
+  "branch": "fix/issue-314-product-bug-email-validation-error-message-not-dis",
   "attempt": 1,
   "maxAttempts": 2,
   "rootCause": "",

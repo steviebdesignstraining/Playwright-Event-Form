@@ -1,12 +1,14 @@
 {
-  "issueNumber": 123,
-  "title": "Test fails on login page submit button",
-  "rootCause": "AI investigation failed",
-  "confidence": 0,
-  "affectedFiles": [],
-  "suggestedFix": "",
-  "testToValidate": "",
-  "reasoning": "Error: Gemini API error: 400 [{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please pass a valid API key\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n]",
+  "issueNumber": 314,
+  "title": "[Product Bug] Email validation error message not displayed for invalid email format on WebKit",
+  "rootCause": "In WebKit (Safari's rendering engine), input elements with type='email' trigger native HTML5 form validation when form submission is attempted. Since the form does not have the 'novalidate' attribute set on the <form> element, WebKit halts submission and displays its own native tooltip error message, preventing custom JavaScript validation (showFormErrors) from executing and populating the .field-error container for email.",
+  "confidence": 0.95,
+  "affectedFiles": [
+    "src/client/app.ts"
+  ],
+  "suggestedFix": "Add the 'novalidate' attribute to the registration form element when rendering it in app.ts so that native browser validation is disabled across all browsers (including WebKit), ensuring custom validation logic runs consistently.",
+  "testToValidate": "Email validation error message not displayed for invalid email format on WebKit",
+  "reasoning": "1. The issue states that the email validation error message is not shown specifically on WebKit for invalid email formats.\n2. Looking at `src/client/app.ts`, the form element is created as `<form id=\"registration-form\">` without the `novalidate` attribute.\n3. HTML5 input type='email' validation behavior differs across browsers. WebKit enforces built-in validation blocking submit events entirely when type='email' contains invalid values and `novalidate` is absent.\n4. Adding `novalidate` to the form ensures consistent handling across Chromium, Firefox, and WebKit.",
   "attempt": 1,
   "maxAttempts": 2
 }
