@@ -1,12 +1,14 @@
 {
-  "issueNumber": 123,
-  "title": "Test fails on login page submit button",
-  "rootCause": "AI investigation failed",
-  "confidence": 0,
-  "affectedFiles": [],
-  "suggestedFix": "",
-  "testToValidate": "",
-  "reasoning": "Error: Gemini API error: 400 [{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please pass a valid API key\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n]",
+  "issueNumber": 316,
+  "title": "[Product Bug] Full CRUD lifecycle via UI fails count assertion in WebKit",
+  "rootCause": "WebKit evaluates page navigations or fetch requests asynchronously differently or slower in a way that when the test clicks 'Open the test inbox' and immediately checks the message cards count assertion, the inbox page has not finished loading its messages via fetch or rendered the message cards yet, resulting in 0 cards instead of 1.",
+  "confidence": 0.85,
+  "affectedFiles": [
+    "e2e/pages/index.page.ts"
+  ],
+  "suggestedFix": "Update openTestInbox in IndexPage to wait for the message cards or inbox page content to be fully loaded/visible before returning, ensuring WebKit completes the asynchronous fetch and render before assertions run.",
+  "testToValidate": "Full CRUD lifecycle via UI",
+  "reasoning": "1. The issue states that the full CRUD lifecycle via UI test fails count assertion in WebKit because it found 0 message cards instead of 1.\n2. In `IndexPage`, `openTestInbox()` only clicks the openTestInboxLink and checks if `this.inboxPage` is visible, but does not wait for the message cards to be fetched and rendered.\n3. WebKit's execution speed on async fetches can cause a race condition where the assertion runs before the message cards are appended to the DOM.\n4. Ensuring `openTestInbox()` or the test waits for `this.messageCards` to have a count greater than 0 or to be visible resolves the race condition across WebKit.",
   "attempt": 1,
   "maxAttempts": 2
 }
