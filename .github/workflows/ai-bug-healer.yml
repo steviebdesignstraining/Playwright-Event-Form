@@ -1247,6 +1247,8 @@ jobs:
        needs.wait-for-human-review.outputs.timeout == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: write
     env:
       TARGET_STATUS: "AI Fix Failed"
     steps:
@@ -1311,6 +1313,28 @@ jobs:
         run: |
           npx tsx scripts/update-project-status.ts
           echo "Moved back to AI Fixing for retry"
+
+      - name: Dispatch retry for same issue
+        if: |
+          (needs.targeted-test.result == 'failure' ||
+          needs.full-regression.result == 'failure' ||
+          needs.retry-ai-investigate.result == 'failure') &&
+          github.event_name != 'workflow_call'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REMAINING_ISSUES: ${{ needs.select-bug.outputs.remaining_issues }}
+        run: |
+          ISSUE_NUM="${{ needs.select-bug.outputs.issue_number }}"
+          if [ -z "$ISSUE_NUM" ]; then
+            echo "No issue number available for retry dispatch."
+            exit 0
+          fi
+          echo "Re-dispatching AI Bug Healer for issue #$ISSUE_NUM (retry)..."
+          gh workflow run ai-bug-healer.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${{ github.event.repository.default_branch || 'main' }}" \
+            -f issue_numbers="$ISSUE_NUM"
+          echo "Retry dispatched for issue #$ISSUE_NUM"
 
       - name: Handle Review Rejection
         if: needs.wait-for-human-review.outputs.changes_requested == 'true'
