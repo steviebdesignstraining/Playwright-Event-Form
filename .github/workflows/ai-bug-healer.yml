@@ -922,7 +922,7 @@ jobs:
             exit 1
           fi
           git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}"
-          git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
+            git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Set git config
         if: env.SKIPPED != 'true'
@@ -938,6 +938,11 @@ jobs:
           merge-multiple: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify GitHub CLI
+        if: env.SKIPPED != 'true'
+        run: |
+          gh --version
 
       - name: Create Pull Request
         if: env.SKIPPED != 'true'
