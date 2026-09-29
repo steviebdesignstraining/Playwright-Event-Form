@@ -1,12 +1,14 @@
 {
-  "issueNumber": 123,
-  "title": "Test fails on login page submit button",
-  "rootCause": "AI investigation failed",
-  "confidence": 0,
-  "affectedFiles": [],
-  "suggestedFix": "",
-  "testToValidate": "",
-  "reasoning": "Error: Gemini API error: 400 [{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please pass a valid API key\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n]",
+  "issueNumber": 307,
+  "title": "[Product Bug] Show validation error for invalid email format fails on Chromium",
+  "rootCause": "In src/client/app.ts, the email input selector matches fields with type='email', but in src/client/app.ts the field function hardcodes type = 'email' while the selector in e2e/selectors/index.ts looks for [name=\"email\"][type=\"email\"]. However, Chromium enforces native HTML5 form validation for inputs with type=\"email\" (e.g. requiring an '@' and a domain structure, or rejecting invalid types before JS submit event or preventing form submission if novalidate isn't handled correctly). Wait, the form has novalidate, but when submitting with an invalid email format like 'invalid-email', Chromium's native constraint validation on input type='email' may prevent the submit event from firing or block custom error handling unless handled or unless type='text' is used or email validation checks are aligned.",
+  "confidence": 0.85,
+  "affectedFiles": [
+    "src/client/app.ts"
+  ],
+  "suggestedFix": "Change the email input type attribute in the field generation or change the input type to 'text' so browser native validation doesn't interfere with custom JavaScript validation errors across different browsers like Chromium.",
+  "testToValidate": "Show validation error for invalid email format",
+  "reasoning": "1. Chromium has stricter built-in constraint validation for inputs with `type=\"email\"` compared to other browsers.\n2. In `src/client/app.ts`, `field('email', 'Email address', 'email', true)` creates an `<input name=\"email\" type=\"email\" required />`.\n3. Even though `<form novalidate>` is present, `type=\"email\"` can cause browser-specific behaviors or discrepancies with custom JS validation checks (`!email.value.includes('@')`).\n4. Changing the email input type to `text` or adjusting validation ensures consistent cross-browser custom validation error rendering.",
   "attempt": 1,
   "maxAttempts": 2
 }
