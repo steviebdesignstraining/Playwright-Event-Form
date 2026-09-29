@@ -1,12 +1,14 @@
 {
-  "issueNumber": 123,
-  "title": "Test fails on login page submit button",
-  "rootCause": "AI investigation failed",
-  "confidence": 0,
-  "affectedFiles": [],
-  "suggestedFix": "",
-  "testToValidate": "",
-  "reasoning": "Error: Gemini API error: 400 [{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please pass a valid API key\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n]",
+  "issueNumber": 311,
+  "title": "[Product Bug] Cancellation promotes incorrect guest from waiting list",
+  "rootCause": "In src/server/store.ts within the cancelByToken function, the waiting list promotion selects the last element of the waiting list array (waiting.at(-1)) instead of the first element (waiting[0] or waiting.at(0)). This causes LIFO (Last-In-First-Out) behavior where the most recently added waiting list guest is promoted rather than the first person who joined the queue.",
+  "confidence": 0.98,
+  "affectedFiles": [
+    "src/server/store.ts"
+  ],
+  "suggestedFix": "In src/server/store.ts inside cancelByToken, change `promoted = waiting.at(-1);` to `promoted = waiting.at(0);` (or `promoted = waiting[0];`).",
+  "testToValidate": "Cancellation promotes incorrect guest from waiting list",
+  "reasoning": "When a confirmed registration is cancelled, any open spot should be offered to the earliest guest on the waiting list following a First-In-First-Out (FIFO) queue order. In src/server/store.ts, `registrations.filter(candidate => candidate.status === 'waiting')` produces an array ordered by creation time. Calling `waiting.at(-1)` retrieves the last item in the array (LIFO behavior), promoting the newest waiting list registrant ('Stephen Bennett') instead of the oldest ('To Be Promoted'). Replacing `waiting.at(-1)` with `waiting.at(0)` correctly promotes the first guest on the waiting list.",
   "attempt": 1,
   "maxAttempts": 2
 }
