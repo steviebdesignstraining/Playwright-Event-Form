@@ -275,7 +275,8 @@ async function main() {
   let resolvedTestName = testName;
   let resolvedProject = project;
 
-  const listCmd = `npx playwright test --project=${project} -g "${testName}" --list`;
+  const escapedTestName = testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const listCmd = `npx playwright test --project=${project} -g "${escapedTestName}" --list`;
   console.log(`Checking if test exists: ${listCmd}`);
 
   try {
@@ -284,10 +285,13 @@ async function main() {
       encoding: 'utf-8',
       stdio: 'pipe',
     });
-  } catch (listError) {
-    const listOutput = (listError instanceof Error && 'stdout' in listError)
-      ? (listError as any).stdout as string
-      : '';
+  } catch (listError: any) {
+    const listOutput = [
+      listError?.stdout,
+      listError?.stderr,
+      listError?.message,
+    ].filter(v => typeof v === 'string').join('\n');
+
     if (listOutput.includes('No tests found')) {
       console.warn(`\n⚠️ No test found matching "${testName}" in project "${project}".`);
       console.warn('  Attempting fuzzy match across all projects...');
@@ -300,7 +304,8 @@ async function main() {
           resolvedTestName = fuzzyMatch.testName;
           resolvedProject = fuzzyMatch.project;
 
-          const retryCmd = `npx playwright test --project=${resolvedProject} -g "${resolvedTestName}" --list`;
+          const escapedName = resolvedTestName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const retryCmd = `npx playwright test --project=${resolvedProject} -g "${escapedName}" --list`;
           try {
             execSync(retryCmd, { cwd: rootDir, encoding: 'utf-8', stdio: 'pipe' });
             console.log(`  → Match verified.`);
@@ -331,7 +336,8 @@ async function main() {
     }
   }
 
-  const cmd = `npx playwright test --project=${resolvedProject} -g "${resolvedTestName}" --workers=${workers} --retries=${retries} --reporter=list`;
+  const escapedTestName = resolvedTestName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cmd = `npx playwright test --project=${resolvedProject} -g "${escapedTestName}" --workers=${workers} --retries=${retries} --reporter=list`;
   console.log(`Running: ${cmd}`);
   
   try {
