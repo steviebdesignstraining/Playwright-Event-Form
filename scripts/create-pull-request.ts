@@ -182,7 +182,7 @@ async function main() {
   const { owner, repo } = getRepoInfo();
   const defaultBranch = process.env.DEFAULT_BRANCH || 'main';
 
-  const branchName = `fix/issue-${bugContext.issueNumber}-${bugContext.title
+  const branchName = summary.branch || `fix/issue-${bugContext.issueNumber}-${bugContext.title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
