@@ -336,8 +336,8 @@ async function main() {
     }
   }
 
-  const escapedTestName = resolvedTestName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const cmd = `npx playwright test --project=${resolvedProject} -g "${escapedTestName}" --workers=${workers} --retries=${retries} --reporter=list`;
+  const escapedFinalName = resolvedTestName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cmd = `npx playwright test --project=${resolvedProject} -g "${escapedFinalName}" --workers=${workers} --retries=${retries} --reporter=list`;
   console.log(`Running: ${cmd}`);
   
   try {
