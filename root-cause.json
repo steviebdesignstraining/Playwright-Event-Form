@@ -1,12 +1,14 @@
 {
-  "issueNumber": 123,
-  "title": "Test fails on login page submit button",
-  "rootCause": "AI investigation failed",
-  "confidence": 0,
-  "affectedFiles": [],
-  "suggestedFix": "",
-  "testToValidate": "",
-  "reasoning": "Error: Gemini API error: 400 [{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please pass a valid API key\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n]",
+  "issueNumber": 306,
+  "title": "[Product Bug] Verify event availability test fails as attendee is undefined",
+  "rootCause": "The API endpoint for getting event details (/api/events/:eventId) includes an artificial delay of 1150ms before returning the event details (including attendees). In the API regression test verifying event availability, either the request is made before the registration settles or the test checks the attendees list before fetching the updated event details correctly.",
+  "confidence": 0.85,
+  "affectedFiles": [
+    "src/server/index.ts"
+  ],
+  "suggestedFix": "Remove or reduce the artificial delay in the GET /api/events/:eventId route in src/server/index.ts, or ensure the test correctly handles/awaits the asynchronous registration and event data population.",
+  "testToValidate": "Verify event availability",
+  "reasoning": "1. The GitHub issue states that the Verify event availability test fails because the created attendee cannot be found (is undefined) in the event attendees list.\n2. Looking at src/server/index.ts, the GET /api/events/:eventId route has an artificial delay `await new Promise((resolve) => setTimeout(resolve, 1_150));` before returning event details and attendees.\n3. This delay can lead to timing mismatches in tests when fetching event details right after a registration is created.\n4. Removing or adjusting this delay ensures test reliability and immediate retrieval of the correct attendees list.",
   "attempt": 1,
   "maxAttempts": 2
 }

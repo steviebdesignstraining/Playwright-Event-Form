@@ -3,7 +3,7 @@
   "projectItemId": "",
   "initialStatus": "Todo",
   "finalStatus": "Todo",
-  "branch": "",
+  "branch": "fix/issue-306-product-bug-verify-event-availability-test-fails-a",
   "attempt": 1,
   "maxAttempts": 2,
   "rootCause": "",
