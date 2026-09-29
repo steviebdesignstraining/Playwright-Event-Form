@@ -1,12 +1,14 @@
 {
-  "issueNumber": 123,
-  "title": "Test fails on login page submit button",
-  "rootCause": "AI investigation failed",
-  "confidence": 0,
-  "affectedFiles": [],
-  "suggestedFix": "",
-  "testToValidate": "",
-  "reasoning": "Error: Gemini API error: 400 [{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please pass a valid API key\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n]",
+  "issueNumber": 309,
+  "title": "[Product Bug] Guest receives confirmation message count mismatch in WebKit",
+  "rootCause": "In WebKit (Safari engine), navigating to the inbox via the link causes the page or fetch execution to trigger multiple times or the inbox message filtering logic retrieves cached/duplicate requests during the test sequence, or there is an event handling/navigation discrepancy where the registration or inbox loading fires twice.",
+  "confidence": 0.45,
+  "affectedFiles": [
+    "src/client/app.ts"
+  ],
+  "suggestedFix": "Investigate WebKit-specific behavior around form submission redirection or fetch request duplication when navigating to /inbox.",
+  "testToValidate": "Guest receives confirmation message count mismatch in WebKit",
+  "reasoning": "Confidence is below 0.70 because the issue description mentions a WebKit-specific count mismatch (actual 2 instead of 1) but without more specific stack traces or reproduction logs from WebKit, the exact asynchronous trigger causing the double fetch or duplicate message creation/rendering cannot be precisely isolated from static analysis alone.",
   "attempt": 1,
   "maxAttempts": 2
 }
