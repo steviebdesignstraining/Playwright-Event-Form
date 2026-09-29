@@ -1,12 +1,14 @@
 {
-  "issueNumber": 123,
-  "title": "Test fails on login page submit button",
-  "rootCause": "AI investigation failed",
-  "confidence": 0,
-  "affectedFiles": [],
-  "suggestedFix": "",
-  "testToValidate": "",
-  "reasoning": "Error: Gemini API error: 400 [{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Please pass a valid API key\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n]",
+  "issueNumber": 315,
+  "title": "[Product Bug] Inbox 'Show all' displays 6 messages instead of 5",
+  "rootCause": "The test store initializes with 4 registrations, creating 4 initial messages. During test execution, a registration is created as part of the test flow, which generates an additional confirmation message, bringing the total message count in the inbox to 5 initial + 1 new = 6 messages instead of the expected 5.",
+  "confidence": 0.85,
+  "affectedFiles": [
+    "e2e/test-data/registration.data.ts"
+  ],
+  "suggestedFix": "Update the test or test data expectation for the message count if a new registration is added during the test steps, or ensure the test store resets properly before verifying the 'Show all' count.",
+  "testToValidate": "Inbox 'Show all' displays 6 messages instead of 5",
+  "reasoning": "The store seeds 4 initial registrations (2 confirmed, 2 waiting) resulting in 4 messages. In the test scenario preceding the assertion, a new registration is made, adding a 5th message (or promoting/creating another), which totals 6 messages. The constant allMessagesCount is currently defined as 5 in e2e/test-data/registration.data.ts, but the actual state after user registration operations contains 6 messages.",
   "attempt": 1,
   "maxAttempts": 2
 }
