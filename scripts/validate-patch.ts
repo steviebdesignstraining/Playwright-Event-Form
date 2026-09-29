@@ -84,27 +84,54 @@ function checkForbiddenPatterns(files: string[]): Array<{ file: string; pattern:
   const violations: Array<{ file: string; pattern: string; description: string; line: number }> = [];
 
   for (const filePath of files) {
-    const fullPath = join(rootDir, filePath);
-    if (!existsSync(fullPath)) continue;
+    try {
+      const diffOutput = execSync(`git diff --no-color -- "${filePath}"`, {
+        cwd: rootDir,
+        encoding: 'utf-8',
+      });
 
-    const content = readFileSync(fullPath, 'utf-8');
-    const lines = content.split('\n');
+      if (!diffOutput) continue;
 
-    for (const { pattern, description } of FORBIDDEN_PATTERNS) {
-      for (let i = 0; i < lines.length; i++) {
-        if (pattern.test(lines[i])) {
+      const lines = diffOutput.split('\n');
+      let lineNum = 0;
+      const addedLines: Array<{ line: string; origLineNum: number }> = [];
+
+      for (const line of lines) {
+        if (line.startsWith('@@')) {
+          const match = line.match(/\+(\d+)(?:,\d+)?/);
+          if (match) {
+            lineNum = parseInt(match[1], 10);
+          }
+        }
+
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          if (line.length > 1) {
+            addedLines.push({ line: line.slice(1), origLineNum: lineNum });
+            lineNum++;
+          }
+        } else if (!line.startsWith('-') && !line.startsWith('@@') && !line.startsWith('+++') && !line.startsWith('---')) {
+          if (lineNum > 0) lineNum++;
+        }
+      }
+
+      for (const { line: addedLine, origLineNum: orig } of addedLines) {
+        for (const { pattern, description } of FORBIDDEN_PATTERNS) {
           const isTestFile = ALLOWED_TEST_FILES.some(p => filePath.startsWith(p));
           if (isTestFile && (description.includes('Skipped') || description.includes('Focused'))) {
             continue;
           }
-          violations.push({
-            file: filePath,
-            pattern: pattern.toString(),
-            description,
-            line: i + 1,
-          });
+          if (pattern.test(addedLine)) {
+            violations.push({
+              file: filePath,
+              pattern: pattern.toString(),
+              description,
+              line: orig,
+            });
+          }
         }
       }
+    } catch {
+      continue;
     }
   }
 
