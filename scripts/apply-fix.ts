@@ -343,30 +343,6 @@ async function callGemini(
   return stripJsonFences(content);
 }
 
-function countDiff(original: string, modified: string): { added: number; deleted: number } {
-  const origLines = original.split('\n');
-  const modLines = modified.split('\n');
-  
-  let added = 0;
-  let deleted = 0;
-  
-  const maxLen = Math.max(origLines.length, modLines.length);
-  for (let i = 0; i < maxLen; i++) {
-    const orig = origLines[i];
-    const mod = modLines[i];
-    
-    if (orig !== mod) {
-      if (orig === undefined) added++;
-      else if (mod === undefined) deleted++;
-      else {
-        added++;
-        deleted++;
-      }
-    }
-  }
-  
-  return { added, deleted };
-}
 
 async function main() {
   console.log('Applying AI fix...');
@@ -427,26 +403,10 @@ async function main() {
     process.exit(1);
   }
 
-  let totalAdded = 0;
-  let totalDeleted = 0;
   const changedFiles: string[] = [];
 
   for (const fileChange of aiResponse.files) {
     const fullPath = join(rootDir, fileChange.path);
-    const originalContent = loadFileContent(fileChange.path);
-    const { added, deleted } = countDiff(originalContent, fileChange.content);
-
-    totalAdded += added;
-    totalDeleted += deleted;
-
-    if (totalAdded > maxAddedLines) {
-      console.error(`Total added lines ${totalAdded} exceeds limit ${maxAddedLines}`);
-      process.exit(1);
-    }
-    if (totalDeleted > maxDeletedLines) {
-      console.error(`Total deleted lines ${totalDeleted} exceeds limit ${maxDeletedLines}`);
-      process.exit(1);
-    }
 
     const dir = dirname(fullPath);
     if (!existsSync(dir)) {
@@ -455,11 +415,39 @@ async function main() {
 
     writeFileSync(fullPath, fileChange.content);
     changedFiles.push(fileChange.path);
-    console.log(`  → Updated: ${fileChange.path} (+${added}/-${deleted})`);
+    console.log(`  → Updated: ${fileChange.path}`);
+  }
+
+  const numstat = execSync('git diff --numstat', {
+    cwd: rootDir,
+    encoding: 'utf-8',
+  });
+
+  let totalAdded = 0;
+  let totalDeleted = 0;
+
+  for (const line of numstat.trim().split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    if (parts.length >= 2) {
+      totalAdded += parseInt(parts[0], 10) || 0;
+      totalDeleted += parseInt(parts[1], 10) || 0;
+    }
   }
 
   console.log(`\nAI Explanation: ${aiResponse.explanation}`);
   console.log(`Total changes: ${changedFiles.length} files, +${totalAdded}/-${totalDeleted} lines`);
+
+  if (totalAdded > maxAddedLines) {
+    console.error(`Total added lines ${totalAdded} exceeds limit ${maxAddedLines}`);
+    execSync('git checkout -- .', { cwd: rootDir, encoding: 'utf-8' });
+    process.exit(1);
+  }
+  if (totalDeleted > maxDeletedLines) {
+    console.error(`Total deleted lines ${totalDeleted} exceeds limit ${maxDeletedLines}`);
+    execSync('git checkout -- .', { cwd: rootDir, encoding: 'utf-8' });
+    process.exit(1);
+  }
 
   const diffOutput = execSync('git diff --no-color', { cwd: rootDir, encoding: 'utf-8' });
   const patchPath = join(rootDir, 'git-diff.patch');
