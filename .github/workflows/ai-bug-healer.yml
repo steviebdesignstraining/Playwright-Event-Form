@@ -294,6 +294,7 @@ jobs:
   ai-investigate:
     name: AI Investigation
     needs: create-fix-branch
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -322,6 +323,7 @@ jobs:
         run: npm ci
 
       - name: Checkout Fix Branch
+        if: always()
         env:
           BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
@@ -333,6 +335,7 @@ jobs:
           git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -399,6 +402,7 @@ jobs:
         run: npm ci
 
       - name: Checkout Fix Branch
+        if: always()
         env:
           BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
@@ -410,6 +414,7 @@ jobs:
           git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -469,6 +474,7 @@ jobs:
         run: npm ci
 
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -496,6 +502,7 @@ jobs:
   apply-ai-fix:
     name: Apply AI Fix
     needs: [update-project-fixing, create-fix-branch]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -522,7 +529,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check Prerequisites
+        run: |
+          if [ -z "${{ needs.create-fix-branch.outputs.branch_name }}" ] || [ ! -f root-cause.json ]; then
+            echo "::warning::Prerequisites not met (branch_name or root-cause.json missing). Apply AI Fix skipped."
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIPPED=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Checkout Fix Branch
+        if: env.SKIPPED != 'true'
         env:
           BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
@@ -534,6 +551,7 @@ jobs:
           git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -542,6 +560,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Apply AI Fix
+        if: env.SKIPPED != 'true'
         run: |
           npx tsx scripts/apply-fix.ts
 
@@ -565,6 +584,7 @@ jobs:
   validate-ai-patch:
     name: Validate AI Patch
     needs: [apply-ai-fix, create-fix-branch]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -583,7 +603,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check Prerequisites
+        run: |
+          if [ -z "${{ needs.create-fix-branch.outputs.branch_name }}" ]; then
+            echo "::warning::create-fix-branch did not provide a branch name. Validation skipped."
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIPPED=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Checkout Fix Branch
+        if: env.SKIPPED != 'true'
         env:
           BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
@@ -595,12 +625,14 @@ jobs:
           git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Restore validation scripts from default branch
+        if: env.SKIPPED != 'true'
         run: |
           git checkout "origin/${{ env.DEFAULT_BRANCH }}" -- scripts/validate-patch.ts tsconfig.json
           git add scripts/validate-patch.ts tsconfig.json
           echo "Restored validate-patch.ts and tsconfig.json from ${{ env.DEFAULT_BRANCH }}"
 
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -628,6 +660,7 @@ jobs:
   update-project-testing:
     name: Move to Testing
     needs: validate-ai-patch
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -646,6 +679,7 @@ jobs:
         run: npm ci
 
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -673,6 +707,7 @@ jobs:
   targeted-test:
     name: Run Targeted Test
     needs: [update-project-testing, create-fix-branch]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -694,7 +729,18 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
+      - name: Check Prerequisites
+        run: |
+          if [ ! -f ai-fix-summary.json ]; then
+            echo "::warning::ai-fix-summary.json not available. Targeted test skipped."
+            echo '{"branch": "", "initialStatus": "Todo", "finalStatus": "Todo", "attempt": 1, "maxAttempts": 2, "filesChanged": [], "linesAdded": 0, "linesDeleted": 0, "targetedTest": "", "targetedTestResult": "skipped", "regressionResult": "pending", "pullRequest": null, "pullRequestUrl": null, "reviewStatus": "pending", "mergeStatus": "pending", "postMergeVerification": "pending", "projectCompletion": "Todo"}' > ai-fix-summary.json
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIPPED=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Checkout Fix Branch
+        if: env.SKIPPED != 'true'
         env:
           BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
@@ -706,6 +752,7 @@ jobs:
           git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -714,6 +761,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Targeted Test
+        if: env.SKIPPED != 'true'
         env:
           TEST_WORKERS: "1"
           TEST_RETRIES: "0"
@@ -732,6 +780,7 @@ jobs:
   full-regression:
     name: Full Regression
     needs: [targeted-test, create-fix-branch]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -753,7 +802,18 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
+      - name: Check Prerequisites
+        run: |
+          if [ ! -f ai-fix-summary.json ]; then
+            echo "::warning::ai-fix-summary.json not available. Full regression skipped."
+            echo '{}' > ai-fix-summary.json
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIPPED=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Checkout Fix Branch
+        if: env.SKIPPED != 'true'
         env:
           BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
@@ -765,6 +825,7 @@ jobs:
           git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -773,6 +834,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Full Regression
+        if: env.SKIPPED != 'true'
         id: run-regression
         run: |
           npm run test:ci
@@ -800,6 +862,7 @@ jobs:
   create-pull-request:
     name: Create Pull Request
     needs: [full-regression, create-fix-branch]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -818,7 +881,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check Prerequisites
+        run: |
+          if [ ! -f ai-fix-summary.json ]; then
+            echo "::warning::ai-fix-summary.json not available or full-regression failed. PR creation skipped."
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIPPED=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Checkout Fix Branch
+        if: env.SKIPPED != 'true'
         env:
           BRANCH_NAME: ${{ needs.create-fix-branch.outputs.branch_name }}
         run: |
@@ -830,11 +903,13 @@ jobs:
           git checkout -B "$BRANCH_NAME" "origin/${BRANCH_NAME}"
 
       - name: Set git config
+        if: env.SKIPPED != 'true'
         run: |
           git config user.name "AI Bug Healer"
           git config user.email "ai-bug-healer@github-actions"
 
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -843,6 +918,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create Pull Request
+        if: env.SKIPPED != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
@@ -850,6 +926,7 @@ jobs:
           npx tsx scripts/create-pull-request.ts
 
       - name: Upload AI Fix Summary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-fix-summary
@@ -860,6 +937,7 @@ jobs:
   update-project-review:
     name: Move to Human Review
     needs: create-pull-request
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -877,7 +955,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check Prerequisites
+        run: |
+          if [ ! -f ai-fix-summary.json ]; then
+            echo "::warning::ai-fix-summary.json not available or PR creation failed. Move to Human Review skipped."
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIPPED=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -886,6 +974,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update Project Status
+        if: env.SKIPPED != 'true'
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
@@ -895,6 +984,7 @@ jobs:
           npx tsx scripts/update-project-status.ts
 
       - name: Upload Updated Context
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bug-context
@@ -905,6 +995,7 @@ jobs:
   wait-for-human-review:
     name: Wait for Human Review
     needs: update-project-review
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 65
     env:
@@ -927,7 +1018,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check Prerequisites
+        run: |
+          if [ ! -f ai-fix-summary.json ]; then
+            echo "::warning::ai-fix-summary.json not available. Wait for Human Review skipped."
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIPPED=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -936,6 +1037,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Wait for Human Review
+        if: env.SKIPPED != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAX_WAIT_MINUTES: ${{ vars.AI_HEAL_MAX_WAIT_MINUTES || '60' }}
@@ -944,6 +1046,7 @@ jobs:
           npx tsx scripts/verify-pr.ts
 
       - name: Check Review Result
+        if: env.SKIPPED != 'true'
         id: check-review
         run: |
           REVIEW_STATUS=$(cat ai-fix-summary.json | jq -r '.reviewStatus')
@@ -959,6 +1062,7 @@ jobs:
           fi
 
       - name: Upload AI Fix Summary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-fix-summary
@@ -969,9 +1073,11 @@ jobs:
   verify-merged-fix:
     name: Verify Merged Fix
     needs: wait-for-human-review
-    if: needs.wait-for-human-review.outputs.review_approved == 'true'
+    if: always() && (needs.wait-for-human-review.outputs.review_approved == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      skipped: ${{ steps.check-prereqs.outputs.skipped }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -991,7 +1097,20 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
+      - name: Check Prerequisites
+        id: check-prereqs
+        run: |
+          if [ ! -f ai-fix-summary.json ]; then
+            echo "::warning::ai-fix-summary.json not available. Verify Merged Fix skipped."
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "SKIPPED=false" >> "$GITHUB_ENV"
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -1000,6 +1119,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify Merge and Post-Merge Tests
+        if: env.SKIPPED != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
@@ -1007,6 +1127,7 @@ jobs:
           npx tsx scripts/verify-merge.ts
 
       - name: Upload AI Fix Summary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-fix-summary
@@ -1017,6 +1138,7 @@ jobs:
   update-project-done:
     name: Move to Done
     needs: [verify-merged-fix, select-bug]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1034,7 +1156,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check Prerequisites
+        run: |
+          if [ ! -f ai-fix-summary.json ]; then
+            echo "::warning::ai-fix-summary.json not available. Move to Done skipped."
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIPPED=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -1043,6 +1175,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Move Project to Done
+        if: env.SKIPPED != 'true'
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
@@ -1052,6 +1185,7 @@ jobs:
           npx tsx scripts/verify-post-merge.ts
 
       - name: Upload Final Evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-healing-evidence
@@ -1066,6 +1200,7 @@ jobs:
           retention-days: 30
 
       - name: Print Final Summary
+        if: env.SKIPPED != 'true'
         run: |
           echo "=========================================="
           echo "AI Bug Healing Complete"
@@ -1077,7 +1212,7 @@ jobs:
 
   handle-failure:
     name: Handle Failure
-    needs: [create-fix-branch, update-project-fixing, ai-investigate, retry-ai-investigate, apply-ai-fix, validate-ai-patch, targeted-test, full-regression, wait-for-human-review, verify-merged-fix]
+    needs: [create-fix-branch, update-project-fixing, ai-investigate, retry-ai-investigate, apply-ai-fix, validate-ai-patch, targeted-test, full-regression, create-pull-request, update-project-review, wait-for-human-review, verify-merged-fix]
     if: |
       always() &&
       (needs.ai-investigate.result == 'failure' ||
@@ -1090,6 +1225,8 @@ jobs:
        needs.validate-ai-patch.result == 'failure' ||
        needs.targeted-test.result == 'failure' ||
        needs.full-regression.result == 'failure' ||
+       needs.create-pull-request.result == 'failure' ||
+       needs.update-project-review.result == 'failure' ||
        needs.verify-merged-fix.result == 'failure' ||
        needs.wait-for-human-review.outputs.changes_requested == 'true' ||
        needs.wait-for-human-review.outputs.timeout == 'true')
@@ -1111,6 +1248,7 @@ jobs:
         run: npm ci
 
       - name: Download Artifacts
+        if: always()
         uses: actions/download-artifact@v4
         with:
           path: .
@@ -1127,7 +1265,12 @@ jobs:
           needs.apply-ai-fix.result == 'failure' ||
           needs.apply-ai-fix.result == 'skipped' ||
           needs.validate-ai-patch.result == 'failure' ||
-          needs.verify-merged-fix.result == 'failure'
+          needs.create-pull-request.result == 'failure' ||
+          needs.update-project-review.result == 'failure' ||
+          needs.verify-merged-fix.result == 'failure' ||
+          needs.full-regression.result == 'skipped' ||
+          needs.create-pull-request.result == 'skipped' ||
+          needs.update-project-review.result == 'skipped'
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
@@ -1138,7 +1281,13 @@ jobs:
           echo "Moved to AI Fix Failed due to investigation failure or fix application failure"
 
       - name: Move back to AI Fixing for retry
-        if: needs.targeted-test.result == 'failure' || needs.full-regression.result == 'failure' || needs.retry-ai-investigate.result == 'failure'
+        if: |
+          needs.targeted-test.result == 'failure' ||
+          needs.full-regression.result == 'failure' ||
+          needs.retry-ai-investigate.result == 'failure' ||
+          needs.full-regression.result == 'skipped' ||
+          needs.create-pull-request.result == 'skipped' ||
+          needs.update-project-review.result == 'skipped'
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_PAT || secrets.GITHUB_TOKEN }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
@@ -1162,7 +1311,7 @@ jobs:
 
   dispatch-next:
     name: Dispatch Next Bug
-    needs: [select-bug, update-project-done, handle-failure]
+    needs: [select-bug, update-project-done, handle-failure, create-pull-request, update-project-review]
     if: always() && needs.select-bug.outputs.remaining_issues != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
