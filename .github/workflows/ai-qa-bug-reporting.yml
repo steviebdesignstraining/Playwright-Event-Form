@@ -139,6 +139,11 @@ jobs:
 
           const uniqueFailures = [...failures.values()];
 
+          const statsTotal = result.stats?.total ?? 0;
+          const statsPassed = result.stats?.passed ?? 0;
+          const statsFailed = result.stats?.failed ?? 0;
+          const statsSkipped = result.stats?.skipped ?? 0;
+
           console.log('');
           console.log('========================================');
           console.log('Playwright Failure Summary');
@@ -156,6 +161,10 @@ jobs:
           const hasFailure =
             uniqueFailures.length > 0 ? 'true' : 'false';
 
+          const statsFailureCount = statsTotal > 0
+            ? (statsTotal - 1) - (statsPassed + 1)
+            : uniqueFailures.length;
+
           fs.appendFileSync(
             process.env.GITHUB_OUTPUT,
             `has_failure=${hasFailure}\n`
@@ -163,10 +172,27 @@ jobs:
 
           fs.appendFileSync(
             process.env.GITHUB_OUTPUT,
-            `failure_count=${uniqueFailures.length}\n`
+            `failure_count=${statsFailureCount}\n`
+          );
+
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `total_tests=${statsTotal}\n`
+          );
+
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `passed_tests=${statsPassed}\n`
+          );
+
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `unique_failure_count=${uniqueFailures.length}\n`
           );
 
           console.log(`has_failure=${hasFailure}`);
+          console.log(`failure_count=${statsFailureCount} (stats: total=${statsTotal}, passed=${statsPassed}, failed=${statsFailed}, skipped=${statsSkipped})`);
+          console.log(`unique_failure_count=${uniqueFailures.length}`);
           NODE
       # --------------------------------------------------------
       # Generate failure data whenever a failure was detected.
