@@ -21,7 +21,7 @@ interface AiFixSummary {
   linesAdded: number;
   linesDeleted: number;
   targetedTest: string;
-  targetedTestResult: 'pending' | 'passed' | 'failed';
+  targetedTestResult: 'pending' | 'passed' | 'failed' | 'skipped';
   regressionResult: 'pending' | 'passed' | 'failed';
   pullRequest: number | null;
   pullRequestUrl: string | null;
@@ -171,10 +171,39 @@ async function main() {
   const workers = process.env.TEST_WORKERS || '1';
   const retries = process.env.TEST_RETRIES || '0';
 
+  const listCmd = `npx playwright test --project=${project} -g "${testName}" --list`;
+  console.log(`Checking if test exists: ${listCmd}`);
+
   try {
-    const cmd = `npx playwright test --project=${project} -g "${testName}" --workers=${workers} --retries=${retries} --reporter=list`;
-    console.log(`Running: ${cmd}`);
-    
+    execSync(listCmd, {
+      cwd: rootDir,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+  } catch (listError) {
+    const listOutput = (listError instanceof Error && 'stdout' in listError)
+      ? (listError as any).stdout as string
+      : '';
+    if (listOutput.includes('No tests found')) {
+      console.warn(`\n⚠️ No test found matching "${testName}" in project "${project}".`);
+      console.warn('  The test name from AI analysis does not match any existing test.');
+      console.warn('  Skipping targeted test.');
+
+      summary.targetedTestResult = 'skipped';
+      saveAiFixSummary(summary);
+
+      console.log('\n⚠️ Targeted test SKIPPED (test not found)');
+      process.exit(0);
+    } else {
+      console.error(`\n❌ Error listing tests: ${listError}`);
+      process.exit(1);
+    }
+  }
+
+  const cmd = `npx playwright test --project=${project} -g "${testName}" --workers=${workers} --retries=${retries} --reporter=list`;
+  console.log(`Running: ${cmd}`);
+  
+  try {
     execSync(cmd, { 
       cwd: rootDir, 
       encoding: 'utf-8', 

@@ -21,7 +21,7 @@ interface AiFixSummary {
   linesAdded: number;
   linesDeleted: number;
   targetedTest: string;
-  targetedTestResult: 'pending' | 'passed' | 'failed';
+  targetedTestResult: 'pending' | 'passed' | 'failed' | 'skipped';
   regressionResult: 'pending' | 'passed' | 'failed';
   pullRequest: number | null;
   pullRequestUrl: string | null;
