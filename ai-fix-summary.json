@@ -3,7 +3,7 @@
   "projectItemId": "",
   "initialStatus": "Todo",
   "finalStatus": "Todo",
-  "branch": "",
+  "branch": "fix/issue-312-product-bug-api-test-verify-event-availability-fai",
   "attempt": 1,
   "maxAttempts": 2,
   "rootCause": "",
