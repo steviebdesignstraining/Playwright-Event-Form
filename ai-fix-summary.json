@@ -3,7 +3,7 @@
   "projectItemId": "",
   "initialStatus": "Todo",
   "finalStatus": "Todo",
-  "branch": "",
+  "branch": "fix/issue-308-product-bug-show-validation-error-for-invalid-emai",
   "attempt": 1,
   "maxAttempts": 2,
   "rootCause": "",
