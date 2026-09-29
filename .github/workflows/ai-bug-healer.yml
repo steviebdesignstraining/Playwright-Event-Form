@@ -641,6 +641,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Validate Patch
+        if: env.SKIPPED != 'true'
         env:
           MAX_FILES: ${{ vars.AI_HEAL_MAX_FILES || '10' }}
           MAX_ADDED_LINES: ${{ vars.AI_HEAL_MAX_ADDED_LINES || '300' }}
