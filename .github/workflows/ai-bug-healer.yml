@@ -886,12 +886,22 @@ jobs:
         run: npm ci
 
       - name: Check Prerequisites
+        if: always()
         run: |
           if [ ! -f ai-fix-summary.json ]; then
-            echo "::warning::ai-fix-summary.json not available or full-regression failed. PR creation skipped."
+            echo "::warning::ai-fix-summary.json not available. PR creation skipped."
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+          elif [ "${{ needs.full-regression.result }}" = "failure" ]; then
+            echo "::warning::Full regression failed. PR creation skipped. Will retry AI fix."
             echo "SKIPPED=true" >> "$GITHUB_ENV"
           else
-            echo "SKIPPED=false" >> "$GITHUB_ENV"
+            REGRESSION_RESULT=$(jq -r '.regressionResult // "pending"' ai-fix-summary.json)
+            if [ "$REGRESSION_RESULT" = "failed" ]; then
+              echo "::warning::Full regression result is 'failed'. PR creation skipped. Will retry AI fix."
+              echo "SKIPPED=true" >> "$GITHUB_ENV"
+            else
+              echo "SKIPPED=false" >> "$GITHUB_ENV"
+            fi
           fi
 
       - name: Checkout Fix Branch
